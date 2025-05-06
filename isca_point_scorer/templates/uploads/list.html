@@ -1,0 +1,66 @@
+{% extends "base.html" %} {% block content %}
+<div class="container">
+  <h1>Uploaded Files</h1>
+
+  <div class="mb-4">
+    <a href="{% url 'upload_file' %}" class="btn btn-primary"
+      >Upload New File</a
+    >
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>File Name</th>
+            <th>Type</th>
+            <th>Date Uploaded</th>
+            <th>Status</th>
+            <th>Meet</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for upload in uploads %}
+          <tr>
+            <td>{{ upload.original_filename }}</td>
+            <td>{{ upload.get_file_type_display }}</td>
+            <td>{{ upload.created_at|date:"M d, Y H:i" }}</td>
+            <td>
+              {% if upload.is_processed %}
+              <span class="badge bg-success">Processed</span>
+              {% else %}
+              <span class="badge bg-warning">Pending</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if upload.meet %}
+              <a href="{% url 'meet_detail' slug=upload.meet.slug %}"
+                >{{ upload.meet.name }}</a
+              >
+              {% else %} - {% endif %}
+            </td>
+            <td>
+              <a
+                href="{% url 'upload_detail' pk=upload.pk %}"
+                class="btn btn-sm btn-info"
+                >Details</a
+              >
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="6" class="text-center">
+              No files have been uploaded yet.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% include "includes/pagination.html" %}
+    </div>
+  </div>
+</div>
+{% endblock %}

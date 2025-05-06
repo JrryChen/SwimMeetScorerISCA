@@ -1,0 +1,25 @@
+{% extends "base.html" %} {% block content %}
+<div class="container">
+  <h1>Upload Meet File</h1>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %} {{ form.as_p }}
+        <button type="submit" class="btn btn-primary">Upload</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="mt-4">
+    <h3>Instructions</h3>
+    <p>
+      Upload your Hytek Meet Manager export files (.hy3) to import meet data.
+    </p>
+    <ul>
+      <li>Maximum file size: 10MB</li>
+      <li>Supported formats: .hy3, .cl2, .zip</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
