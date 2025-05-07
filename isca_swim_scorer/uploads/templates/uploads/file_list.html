@@ -1,0 +1,126 @@
+{% extends "base.html" %} {% block content %}
+<div class="container mt-4">
+  <h1>Uploaded Files</h1>
+
+  <a href="{% url 'upload-create' %}" class="btn btn-primary mb-3"
+    >Upload New File</a
+  >
+
+  {% if files %}
+  <div class="table-responsive">
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Filename</th>
+          <th>Type</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Uploaded</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for file in files %}
+        <tr>
+          <td>{{ file.original_filename }}</td>
+          <td>{{ file.get_file_type_display }}</td>
+          <td>{{ file.get_source_type_display }}</td>
+          <td>
+            {% if file.is_processed %}
+            <span class="badge bg-success">Processed</span>
+            {% else %}
+            <span class="badge bg-warning">Pending</span>
+            {% endif %}
+          </td>
+          <td>{{ file.created_at|date:"M d, Y H:i" }}</td>
+          <td>
+            {% if file.is_processed and file.file_type == 'HY3' %}
+            <button
+              class="btn btn-sm btn-info view-results"
+              data-file-id="{{ file.id }}"
+            >
+              View Results
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>No files have been uploaded yet.</p>
+  {% endif %}
+</div>
+
+<!-- Results Modal -->
+<div class="modal fade" id="resultsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Meet Results</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <div id="resultsContent"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %} {% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const resultsModal = new bootstrap.Modal(
+      document.getElementById("resultsModal")
+    );
+
+    document.querySelectorAll(".view-results").forEach((button) => {
+      button.addEventListener("click", async function () {
+        const fileId = this.dataset.fileId;
+        const resultsContent = document.getElementById("resultsContent");
+        resultsContent.innerHTML =
+          '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+
+        try {
+          const response = await fetch(`/uploads/${fileId}/results/`);
+          const data = await response.json();
+
+          if (response.ok) {
+            let html = "";
+            for (const [eventName, results] of Object.entries(data.results)) {
+              html += `<h4>${eventName}</h4>`;
+              html += '<table class="table table-sm">';
+              html +=
+                "<thead><tr><th>Swimmer</th><th>Age</th><th>Prelim</th><th>Swimoff</th><th>Final</th></tr></thead>";
+              html += "<tbody>";
+              for (const result of results) {
+                html += `<tr>
+                                <td>${result.swimmer}</td>
+                                <td>${result.age}</td>
+                                <td>${result.prelim_time || "-"}</td>
+                                <td>${result.swimoff_time || "-"}</td>
+                                <td>${result.final_time || "-"}</td>
+                            </tr>`;
+              }
+              html += "</tbody></table>";
+            }
+            resultsContent.innerHTML = html;
+          } else {
+            resultsContent.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+          }
+        } catch (error) {
+          resultsContent.innerHTML =
+            '<div class="alert alert-danger">Error loading results</div>';
+        }
+
+        resultsModal.show();
+      });
+    });
+  });
+</script>
+{% endblock %}
