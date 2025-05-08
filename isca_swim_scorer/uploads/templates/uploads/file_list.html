@@ -2,7 +2,7 @@
 <div class="container mt-4">
   <h1>Uploaded Files</h1>
 
-  <a href="{% url 'upload-create' %}" class="btn btn-primary mb-3"
+  <a href="{% url 'uploads:upload-create' %}" class="btn btn-primary mb-3"
     >Upload New File</a
   >
 
@@ -42,6 +42,11 @@
               View Results
             </button>
             {% endif %}
+            <a
+              href="{% url 'uploads:upload-delete' file.id %}"
+              class="btn btn-sm btn-danger"
+              >Delete</a
+            >
           </td>
         </tr>
         {% endfor %}

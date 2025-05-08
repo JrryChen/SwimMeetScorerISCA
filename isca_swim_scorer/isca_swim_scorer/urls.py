@@ -21,12 +21,12 @@ from django.conf.urls.static import static
 from django.views.generic import RedirectView
 
 urlpatterns = [
-    path('', RedirectView.as_view(url='/meets/')),
+    path('', RedirectView.as_view(url='/uploads/')),
     path('admin/', admin.site.urls),
     path('meets/', include('meets.urls')),
+    path('uploads/', include('uploads.urls', namespace='uploads')),
     # path('api/', include('api.urls')),
     # path('scoring/', include('scoring.urls')),
-    # path('uploads/', include('uploads.urls')),
     # path('core/', include('core.urls')),
 ]
 
