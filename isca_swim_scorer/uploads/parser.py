@@ -193,29 +193,3 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
     except Exception as e:
         logger.error(f"Error processing Hytek file: {str(e)}", exc_info=True)
         raise
-
-# Example usage
-if __name__ == "__main__":
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    # Example file path
-    sample_file = "../../SampleMeetResults/Meet Results-PCS Spring Home Meet 2025-22Mar2025-002.hy3"
-    
-    # Process the file
-    results = process_hytek_file(sample_file)
-    
-    # Print results for each event
-    for event_name, event_results in results.items():
-        print(f"\n{event_name}:")
-        for result in event_results:
-            print(f"Swimmer: {result['swimmer']}")
-            print(f"  Age: {result['age']}")
-            print(f"  Prelim Time: {result['prelim_time']}")
-            print(f"  Swimoff Time: {result['swimoff_time']}")
-            print(f"  Final Time: {result['final_time']}")
-            print("---")
-

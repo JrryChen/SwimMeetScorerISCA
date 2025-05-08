@@ -21,9 +21,7 @@ class UploadedFile(TimeStampedModel):
 
     FILE_TYPES = (
         ('HY3', 'HY3 - Meet Manager Export'),
-        ('CL2', 'CL2 - Results Export'),
-        ('ZIP', 'ZIP - Compressed File'),
-        ('OTHER', 'Other File Type')
+        ('ZIP', 'ZIP - Compressed File (must contain HY3)'),
     )
 
     SOURCE_TYPES = (

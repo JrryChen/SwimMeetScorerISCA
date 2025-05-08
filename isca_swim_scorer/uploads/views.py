@@ -6,6 +6,9 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from datetime import datetime, date
 from django.utils.text import slugify
+import zipfile
+import os
+import tempfile
 
 from .models import UploadedFile
 from .parser import process_hytek_file
@@ -32,21 +35,47 @@ class UploadedFileCreateView(CreateView):
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
         return f"{slug}-{timestamp}"
 
+    def extract_hy3_from_zip(self, zip_path):
+        """Extract HY3 file from ZIP archive and return its path."""
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            # Find all .hy3 files in the zip
+            hy3_files = [f for f in zip_ref.namelist() if f.lower().endswith('.hy3')]
+            
+            if not hy3_files:
+                raise ValueError("No HY3 files found in the ZIP archive")
+            
+            if len(hy3_files) > 1:
+                raise ValueError("Multiple HY3 files found in the ZIP archive. Please upload a ZIP with only one HY3 file.")
+            
+            # Create a temporary directory
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Extract the HY3 file
+                hy3_filename = hy3_files[0]
+                zip_ref.extract(hy3_filename, temp_dir)
+                return os.path.join(temp_dir, hy3_filename)
+
     def form_valid(self, form):
         # Set the original filename before saving
         form.instance.original_filename = form.instance.file.name
         response = super().form_valid(form)
         
-        # Process the file if it's a HY3 file
-        if form.instance.file_type == 'HY3':
-            try:
-                # Get the full path of the uploaded file
-                file_path = form.instance.file.path
-                
+        try:
+            file_path = form.instance.file.path
+            
+            # Handle ZIP files
+            if form.instance.file_type == 'ZIP':
+                if not file_path.lower().endswith('.zip'):
+                    raise ValueError("File must be a ZIP archive")
+                file_path = self.extract_hy3_from_zip(file_path)
+                form.instance.file_type = 'HY3'  # Change type to HY3 after extraction
+                form.instance.save()
+            
+            # Process the file if it's a HY3 file
+            if form.instance.file_type == 'HY3':
                 # Create a new meet if one doesn't exist
                 if not form.instance.meet:
                     # Extract meet name from filename
-                    meet_name = form.instance.original_filename.replace('.hy3', '')
+                    meet_name = form.instance.original_filename.replace('.hy3', '').replace('.zip', '')
                     
                     # Use today's date if we can't extract it from filename
                     meet_date = date.today()
@@ -78,11 +107,11 @@ class UploadedFileCreateView(CreateView):
                 form.instance.save()
                 
                 messages.success(self.request, 'File processed successfully!')
-                
-            except Exception as e:
-                form.instance.processing_errors = str(e)
-                form.instance.save()
-                messages.error(self.request, f'Error processing file: {str(e)}')
+            
+        except Exception as e:
+            form.instance.processing_errors = str(e)
+            form.instance.save()
+            messages.error(self.request, f'Error processing file: {str(e)}')
         
         return response
 
