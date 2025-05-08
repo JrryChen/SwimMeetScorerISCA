@@ -3388,7 +3388,7 @@ pointSystem14 = {
     },
 }
 
-pointSystem15Plus = {
+pointSystem15plus = {
     "Women's": {
         "Chin-Ups": {
             30: 1000,

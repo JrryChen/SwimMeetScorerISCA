@@ -142,6 +142,7 @@ class Result(TimeStampedModel):
     prelim_points = models.FloatField(default=0)
     swim_off_points = models.FloatField(default=0)
     final_points = models.FloatField(default=0)
+    best_points = models.FloatField(default=0)
 
     # Status
     is_disqualified = models.BooleanField(default=False)

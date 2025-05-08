@@ -101,16 +101,20 @@
               html += `<h4>${eventName}</h4>`;
               html += '<table class="table table-sm">';
               html +=
-                "<thead><tr><th>Swimmer</th><th>Age</th><th>Prelim</th><th>Swimoff</th><th>Final</th></tr></thead>";
+                "<thead><tr><th>Swimmer</th><th>Age</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
               html += "<tbody>";
               for (const result of results) {
                 html += `<tr>
-                                <td>${result.swimmer}</td>
-                                <td>${result.age}</td>
-                                <td>${result.prelim_time || "-"}</td>
-                                <td>${result.swimoff_time || "-"}</td>
-                                <td>${result.final_time || "-"}</td>
-                            </tr>`;
+                    <td>${result.swimmer}</td>
+                    <td>${result.age}</td>
+                    <td>${result.prelim_time || "-"}</td>
+                    <td>${result.prelim_points || "-"}</td>
+                    <td>${result.swimoff_time || "-"}</td>
+                    <td>${result.swimoff_points || "-"}</td>
+                    <td>${result.final_time || "-"}</td>
+                    <td>${result.final_points || "-"}</td>
+                    <td>${result.best_points || "-"}</td>
+                </tr>`;
               }
               html += "</tbody></table>";
             }

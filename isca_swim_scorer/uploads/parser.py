@@ -8,6 +8,7 @@ from django.utils.text import slugify
 from meets.models import Meet, Event, Team, Swimmer, Result
 from uploads.models import UploadedFile
 from core.utils import format_swim_time, parse_swim_time
+from scoring.scoring_system import ScoringSystem
 
 # Add custom parser path and import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "hytek-parser"))
@@ -16,22 +17,20 @@ from hytek_parser.hy3.enums import Course, Stroke, Gender
 
 logger = logging.getLogger(__name__)
 
-def get_event_name(event, meet_course: Course) -> str:
-    """Convert event details into a readable name."""
-    gender_str = {
-        Gender.MALE: "Men's",
-        Gender.FEMALE: "Women's",
-        Gender.UNKNOWN: "Mixed"
-    }.get(event.gender, "Unknown")
-
+def get_event_name(event, course: str) -> str:
+    """Get the formatted event name for display and point table lookup"""
     # Handle relay events
     if event.relay:
         if event.stroke == Stroke.MEDLEY:
-            return f"{gender_str} {event.distance} Medley Relay ({meet_course.name})"
+            return f"{event.distance} Medley Relay ({course})"
         else:
-            return f"{gender_str} {event.distance} Freestyle Relay ({meet_course.name})"
+            return f"{event.distance} Freestyle Relay ({course})"
     
-    # Handle individual events
+    # Handle individual medley events
+    if event.stroke == Stroke.MEDLEY:
+        return f"{event.distance} Individual Medley ({course})"
+    
+    # For individual events, format properly
     stroke_str = {
         Stroke.FREESTYLE: "Freestyle",
         Stroke.BACKSTROKE: "Backstroke",
@@ -39,75 +38,10 @@ def get_event_name(event, meet_course: Course) -> str:
         Stroke.BUTTERFLY: "Butterfly",
         Stroke.MEDLEY: "Individual Medley"
     }.get(event.stroke, "Unknown")
-
-    return f"{gender_str} {event.distance} {stroke_str} ({meet_course.name})"
+    
+    return f"{event.distance} {stroke_str} ({course})"
 
 @transaction.atomic
-def save_event_to_db(meet: Meet, event, event_name: str, results: List[dict], entries):
-    """Save an event and its results to the database."""
-    # Create or get the event
-    event_obj, created = Event.objects.get_or_create(
-        meet=meet,
-        event_number=int(event.number),
-        defaults={
-            'name': event_name,
-            'distance': event.distance,
-            'stroke': event.stroke.name,
-            'gender': event.gender.name,
-            'is_relay': event.relay,
-            'min_age': event.age_min,
-            'max_age': event.age_max
-        }
-    )
-
-    # Save results
-    for result, entry in zip(results, entries):
-        # Create or get the swimmer
-        swimmer_name = result['swimmer']
-        first_name, *middle, last_name = swimmer_name.split()
-        middle_name = ' '.join(middle) if middle else ''
-        
-        # Get or create the team first
-        team_code = result.get('team_code', 'UNKNOWN')
-        team_name = result.get('team_name', 'Unknown Team')
-        team, _ = Team.objects.get_or_create(
-            meet=meet,
-            code=team_code,
-            defaults={
-                'name': team_name,
-                'short_name': team_code
-            }
-        )
-        
-        # Convert gender to string if it's an enum
-        gender = result.get('gender', Gender.UNKNOWN)
-        if isinstance(gender, Gender):
-            gender = gender.name
-        
-        # Now create the swimmer with both team and meet
-        swimmer, created = Swimmer.objects.get_or_create(
-            first_name=first_name,
-            last_name=last_name,
-            meet=meet,
-            defaults={
-                'middle_name': middle_name,
-                'team': team,
-                'gender': gender,
-                'age': result['raw_age'],  # Use raw age for database
-                'swimmer_meet_id': result.get('swimmer_meet_id', ''),
-                'usa_swimming_id': result.get('usa_swimming_id', '')
-            }
-        )
-
-        # Create the result using raw times from the entry
-        Result.objects.create(
-            event=event_obj,
-            swimmer=swimmer,
-            prelim_time=entry.prelim_time,
-            swim_off_time=entry.swimoff_time,
-            final_time=entry.finals_time
-        )
-
 def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict]]:
     """
     Process a Hytek file and return organized results.
@@ -132,12 +66,27 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
         
         # Extract and organize event results
         results = {}
+        scoring = ScoringSystem()
 
         for event_id in event_ids:
             event = events[event_id]
-            event_name = get_event_name(event, meet_course)
+            event_name = get_event_name(event, meet_course.name)
             event_results = []
-            event_entries = []
+
+            # Create the event in database if meet is provided
+            event_obj = None
+            if meet:
+                event_obj = Event.objects.create(
+                    meet=meet,
+                    event_number=event.number,
+                    name=event_name,
+                    distance=event.distance,
+                    stroke=event.stroke.name,
+                    gender=event.gender.name,
+                    is_relay=event.relay,
+                    min_age=event.age_min,
+                    max_age=event.age_max
+                )
 
             for entry in event.entries:
                 swimmer = entry.swimmers[0]
@@ -148,21 +97,39 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                 if isinstance(gender, Gender):
                     gender = gender.name
                 
-                # Format times for display
-                prelim_time = format_swim_time(entry.prelim_time) if entry.prelim_time else None
-                swimoff_time = format_swim_time(entry.swimoff_time) if entry.swimoff_time else None
-                final_time = format_swim_time(entry.finals_time) if entry.finals_time else None
+                # Format times for display - times are already in seconds
+                prelim_time = format_swim_time(entry.prelim_time) if entry.prelim_time and entry.prelim_time > 0 else "-"
+                swimoff_time = format_swim_time(entry.swimoff_time) if entry.swimoff_time and entry.swimoff_time > 0 else "-"
+                final_time = format_swim_time(entry.finals_time) if entry.finals_time and entry.finals_time > 0 else "-"
                 
-                # Format age for display - show N/A if age is 0
-                display_age = "N/A" if swimmer.age == 0 else swimmer.age
+                # Format age for display - show N/A if age is 0 or None
+                display_age = "N/A" if not swimmer.age or swimmer.age == 0 else swimmer.age
+                
+                # Calculate points using best_time
+                point_age = swimmer.age if swimmer.age and swimmer.age > 0 else None
+                
+                # Determine best time
+                best_time = None
+                if entry.finals_time and entry.finals_time > 0:
+                    best_time = entry.finals_time
+                elif entry.swimoff_time and entry.swimoff_time > 0:
+                    best_time = entry.swimoff_time
+                elif entry.prelim_time and entry.prelim_time > 0:
+                    best_time = entry.prelim_time
+
+                # Calculate points
+                points = None
+                if best_time:
+                    points = round(scoring.calculate_points(event_name, best_time, point_age, event.age_max, swimmer.gender), 2)
                 
                 result_entry = {
                     "swimmer": swimmer_name,
-                    "age": display_age,  # Formatted age for display
-                    "raw_age": swimmer.age,  # Raw age for database
+                    "age": display_age,
+                    "raw_age": swimmer.age,
                     "prelim_time": prelim_time,
                     "swimoff_time": swimoff_time,
                     "final_time": final_time,
+                    "points": points,
                     "gender": gender,
                     "team_code": swimmer.team_code,
                     "team_name": parsed_file.meet.teams.get(swimmer.team_code, Team(name="Unknown Team")).name,
@@ -170,22 +137,62 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                     "usa_swimming_id": swimmer.usa_swimming_id
                 }
                 event_results.append(result_entry)
-                event_entries.append(entry)
+
+                # Save to database if meet is provided
+                if meet and event_obj:
+                    # Get or create the team
+                    team, _ = Team.objects.get_or_create(
+                        meet=meet,
+                        code=swimmer.team_code,
+                        defaults={
+                            'name': parsed_file.meet.teams.get(swimmer.team_code, "Unknown Team").name,
+                            'short_name': swimmer.team_code
+                        }
+                    )
+
+                    # Get or create the swimmer
+                    swimmer_obj, _ = Swimmer.objects.get_or_create(
+                        meet=meet,
+                        team=team,
+                        swimmer_meet_id=swimmer.meet_id,
+                        defaults={
+                            'first_name': swimmer.first_name,
+                            'last_name': swimmer.last_name,
+                            'gender': event.gender.name,
+                            'age': swimmer.age if swimmer.age and swimmer.age > 0 else None
+                        }
+                    )
+
+                    # Create the result
+                    result = Result.objects.create(
+                        event=event_obj,
+                        swimmer=swimmer_obj,
+                        prelim_time=entry.prelim_time,
+                        swim_off_time=entry.swimoff_time,
+                        final_time=entry.finals_time
+                    )
+
+                    # Calculate points for each time
+                    if result.prelim_time:
+                        result.prelim_points = scoring.calculate_points(event_name, result.prelim_time, swimmer.age, event.age_max, swimmer.gender)
+                        logger.info(f"Prelim points for {swimmer_obj.full_name} in {event_name}: {result.prelim_points}")
+                    if result.swim_off_time:
+                        result.swim_off_points = scoring.calculate_points(event_name, result.swim_off_time, swimmer.age, event.age_max, swimmer.gender)
+                        logger.info(f"Swim-off points for {swimmer_obj.full_name} in {event_name}: {result.swim_off_points}")
+                    if result.final_time:
+                        result.final_points = scoring.calculate_points(event_name, result.final_time, swimmer.age, event.age_max, swimmer.gender)
+                        logger.info(f"Final points for {swimmer_obj.full_name} in {event_name}: {result.final_points}")
+
+                    result.best_points = max(result.prelim_points, result.swim_off_points, result.final_points)
+                    logger.info(f"Best points for {swimmer_obj.full_name} in {event_name}: {result.best_points}")
+                    result.save()
 
             # Sort by final time, ignoring missing or zero times
-            sorted_pairs = sorted(
-                zip(event_results, event_entries),
-                key=lambda x: float('inf') if not x[1].finals_time or x[1].finals_time == 0.0 else x[1].finals_time
+            event_results.sort(
+                key=lambda x: float('inf') if x['final_time'] == '-' else parse_swim_time(x['final_time'])
             )
-            event_results, event_entries = zip(*sorted_pairs)
-            event_results = list(event_results)
-            event_entries = list(event_entries)
                 
             results[event_name] = event_results
-            
-            # Save to database if meet is provided
-            if meet:
-                save_event_to_db(meet, event, event_name, event_results, event_entries)
             
         logger.info(f"Successfully processed {len(results)} events")
         return results
