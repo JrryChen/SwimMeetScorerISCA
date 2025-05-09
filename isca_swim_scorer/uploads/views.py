@@ -159,9 +159,10 @@ def get_file_results(request, pk):
         # Get results from the database
         meet = uploaded_file.meet
         results = {}
-        scoring = ScoringSystem()
+        # scoring = ScoringSystem()
         
         for event in meet.events.all():
+            # print(event.name)
             event_results = []
             results_list = []
             
@@ -176,12 +177,12 @@ def get_file_results(request, pk):
                 display_age = "N/A" if not result.swimmer.age or result.swimmer.age == 0 else result.swimmer.age
                 
                 # Calculate points using None if swimmer age is 0 or None
-                point_age = result.swimmer.age if result.swimmer.age and result.swimmer.age > 0 else None
+                # point_age = result.swimmer.age if result.swimmer.age and result.swimmer.age > 0 else None
                 
-                # Calculate points for each time type
-                prelim_points = round(scoring.calculate_points(event.event_key, result.prelim_time, point_age, event.max_age, result.swimmer.gender), 2) if result.prelim_time and result.prelim_time > 0 else None
-                swimoff_points = round(scoring.calculate_points(event.event_key, result.swim_off_time, point_age, event.max_age, result.swimmer.gender), 2) if result.swim_off_time and result.swim_off_time > 0 else None
-                final_points = round(scoring.calculate_points(event.event_key, result.final_time, point_age, event.max_age, result.swimmer.gender), 2) if result.final_time and result.final_time > 0 else None
+                # # Calculate points for each time type
+                # prelim_points = round(scoring.calculate_points(event.event_key, result.prelim_time, point_age, event.max_age, result.swimmer.gender), 2) if result.prelim_time and result.prelim_time > 0 else None
+                # swimoff_points = round(scoring.calculate_points(event.event_key, result.swim_off_time, point_age, event.max_age, result.swimmer.gender), 2) if result.swim_off_time and result.swim_off_time > 0 else None
+                # final_points = round(scoring.calculate_points(event.event_key, result.final_time, point_age, event.max_age, result.swimmer.gender), 2) if result.final_time and result.final_time > 0 else None
                 
                 result_data = {
                     'swimmer': result.swimmer.full_name,
@@ -189,10 +190,10 @@ def get_file_results(request, pk):
                     'prelim_time': prelim_time,
                     'swimoff_time': swimoff_time,
                     'final_time': final_time,
-                    'prelim_points': round(result.prelim_points, 2) if result.prelim_points > 0 else None,
-                    'swimoff_points': round(result.swim_off_points, 2) if result.swim_off_points > 0 else None,
-                    'final_points': round(result.final_points, 2) if result.final_points > 0 else None,
-                    'best_points': round(result.best_points, 2) if result.best_points > 0 else None,
+                    'prelim_points': f"{result.prelim_points:.2f}" if result.prelim_points > 0 else None,
+                    'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else None,
+                    'final_points': f"{result.final_points:.2f}" if result.final_points > 0 else None,
+                    'best_points': f"{result.best_points:.2f}" if result.best_points > 0 else None,
                     # Add raw times for sorting
                     '_final_time': result.final_time if result.final_time and result.final_time > 0 else float('inf'),
                     '_swimoff_time': result.swim_off_time if result.swim_off_time and result.swim_off_time > 0 else float('inf'),

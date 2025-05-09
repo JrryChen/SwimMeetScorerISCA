@@ -106,8 +106,8 @@ class Event(TimeStampedModel):
     @property
     def event_key(self):
         """Generate a unique key for lookup in point systems"""
-        gender_text = "Men's" if self.gender == Gender.MALE else \
-                    "Women's" if self.gender == Gender.FEMALE else "Mixed"
+        gender_text = "Men's" if self.gender == Gender.MALE.value else \
+                    "Women's" if self.gender == Gender.FEMALE.value else ""
         
         # Handle relay events
         if self.is_relay:
@@ -118,6 +118,8 @@ class Event(TimeStampedModel):
         
         # Handle individual events
         stroke_display = self.get_stroke_display() # displays the name of stroke
+        # Capitalize first letter of each word
+        stroke_display = ' '.join(word.capitalize() for word in stroke_display.split())
         return f"{gender_text} {self.distance} {stroke_display} ({self.meet.course})"
     
 class Result(TimeStampedModel):

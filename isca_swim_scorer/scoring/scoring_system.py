@@ -21,20 +21,15 @@ class ScoringSystem:
             15: pointSystem15plus,  # For 15 and older
         }
 
-    def _get_point_table(self, event_key: str, age: Optional[int] = None, event_max_age: Optional[int] = None, gender: Optional[str] = None) -> Optional[Dict[float, float]]:
+    def _get_point_table(self, event_key: str, age: Optional[int] = None, event_max_age: Optional[int] = None) -> Optional[Dict[float, float]]:
         """Get the appropriate point table for an event and age."""
-                
-        # For mixed events, use the swimmer's gender to determine which point table to use
-        if gender:
-            if gender == Gender.MALE:
-                event_gender = "Men's"
-            elif gender == Gender.FEMALE:
-                event_gender = "Women's"
-            else:
-                event_gender = "Men's"
-        else:
-            event_gender = "Men's"        
-        
+        words = event_key.split(" ")
+        event_gender = words[0]
+        actual_event = " ".join(words[1:])
+
+        if event_gender == "Mixed":
+            event_gender = "Men's"
+
         # If age is None, use event max age if available, otherwise use 15plus
         if age is None:
             if event_max_age is not None:
@@ -43,6 +38,7 @@ class ScoringSystem:
                 point_age = 15  # Use 15plus scoring system as fallback
         else:
             point_age = age if age > 0 and age < 15 else 15
+            
         # Get the appropriate point system for the age
         point_system = self.point_systems.get(point_age)
         if not point_system:
@@ -53,12 +49,12 @@ class ScoringSystem:
                 return None
         
         # Get the point table for the event
-        return point_system.get(event_gender).get(event_key)
+        return point_system.get(event_gender).get(actual_event)
 
     def calculate_points(self, event_key: str, time: float, age: Optional[int] = None, event_max_age: Optional[int] = None, gender: Optional[str] = None) -> float:
         """Calculate points for a given event and time"""
         # Get the appropriate point table based on age
-        point_table = self._get_point_table(event_key, age, event_max_age, gender)
+        point_table = self._get_point_table(event_key, age, event_max_age)
         
         # If no point table found, return 0 points
         if point_table is None:
@@ -97,13 +93,13 @@ class ScoringSystem:
         
         # Calculate points for each time type if it exists
         if result.prelim_time and result.prelim_time > 0:
-            result.prelim_points = self.calculate_points(event_key, result.prelim_time, result.swimmer.age, result.event.max_age, result.swimmer.gender)
+            result.prelim_points = self.calculate_points(event_key, result.prelim_time, result.swimmer.age, result.event.max_age)
             
         if result.swim_off_time and result.swim_off_time > 0:
-            result.swim_off_points = self.calculate_points(event_key, result.swim_off_time, result.swimmer.age, result.event.max_age, result.swimmer.gender)
+            result.swim_off_points = self.calculate_points(event_key, result.swim_off_time, result.swimmer.age, result.event.max_age)
             
         if result.final_time and result.final_time > 0:
-            result.final_points = self.calculate_points(event_key, result.final_time, result.swimmer.age, result.event.max_age, result.swimmer.gender)
+            result.final_points = self.calculate_points(event_key, result.final_time, result.swimmer.age, result.event.max_age)
             
         result.save()
 

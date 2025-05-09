@@ -19,16 +19,20 @@ logger = logging.getLogger(__name__)
 
 def get_event_name(event, course: str) -> str:
     """Get the formatted event name for display and point table lookup"""
+    # Get gender text
+    gender_text = "Men's" if event.gender == Gender.MALE else \
+                 "Women's" if event.gender == Gender.FEMALE else ""
+    
     # Handle relay events
     if event.relay:
         if event.stroke == Stroke.MEDLEY:
-            return f"{event.distance} Medley Relay ({course})"
+            return f"{gender_text} {event.distance} Medley Relay ({course})"
         else:
-            return f"{event.distance} Freestyle Relay ({course})"
+            return f"{gender_text} {event.distance} Freestyle Relay ({course})"
     
     # Handle individual medley events
     if event.stroke == Stroke.MEDLEY:
-        return f"{event.distance} Individual Medley ({course})"
+        return f"{gender_text} {event.distance} Individual Medley ({course})"
     
     # For individual events, format properly
     stroke_str = {
@@ -38,8 +42,7 @@ def get_event_name(event, course: str) -> str:
         Stroke.BUTTERFLY: "Butterfly",
         Stroke.MEDLEY: "Individual Medley"
     }.get(event.stroke, "Unknown")
-    
-    return f"{event.distance} {stroke_str} ({course})"
+    return f"{gender_text} {event.distance} {stroke_str} ({course})"
 
 @transaction.atomic
 def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict]]:
@@ -82,7 +85,7 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                     name=event_name,
                     distance=event.distance,
                     stroke=event.stroke.name,
-                    gender=event.gender.name,
+                    gender=event.gender.value,
                     is_relay=event.relay,
                     min_age=event.age_min,
                     max_age=event.age_max
@@ -102,9 +105,6 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                 swimoff_time = format_swim_time(entry.swimoff_time) if entry.swimoff_time and entry.swimoff_time > 0 else "-"
                 final_time = format_swim_time(entry.finals_time) if entry.finals_time and entry.finals_time > 0 else "-"
                 
-                # Format age for display - show N/A if age is 0 or None
-                display_age = "N/A" if not swimmer.age or swimmer.age == 0 else swimmer.age
-                
                 # Calculate points using best_time
                 point_age = swimmer.age if swimmer.age and swimmer.age > 0 else None
                 
@@ -112,10 +112,11 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                 best_time = None
                 if entry.finals_time and entry.finals_time > 0:
                     best_time = entry.finals_time
-                elif entry.swimoff_time and entry.swimoff_time > 0:
-                    best_time = entry.swimoff_time
                 elif entry.prelim_time and entry.prelim_time > 0:
                     best_time = entry.prelim_time
+                elif entry.swimoff_time and entry.swimoff_time > 0:
+                    best_time = entry.swimoff_time
+                
 
                 # Calculate points
                 points = None
@@ -124,7 +125,6 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                 
                 result_entry = {
                     "swimmer": swimmer_name,
-                    "age": display_age,
                     "raw_age": swimmer.age,
                     "prelim_time": prelim_time,
                     "swimoff_time": swimoff_time,
@@ -158,7 +158,7 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                         defaults={
                             'first_name': swimmer.first_name,
                             'last_name': swimmer.last_name,
-                            'gender': event.gender.name,
+                            'gender': swimmer.gender.name,
                             'age': swimmer.age if swimmer.age and swimmer.age > 0 else None
                         }
                     )
