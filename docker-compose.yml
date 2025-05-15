@@ -1,18 +1,35 @@
 version: "3.8"
 
 services:
-  app:
-    build: .
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    environment:
-      - PYTHONUNBUFFERED=1
-      - DJANGO_SETTINGS_MODULE=isca_swim_scorer.settings
-    networks:
-      - app-network
+  redis-app-isca:
+    image: redis
 
-networks:
-  app-network:
-    driver: bridge
+  django-app-isca:
+    container_name: django-app-isca
+    build:
+      context: ./isca_swim_scorer
+    volumes:
+      - ./isca_swim_scorer:/usr/src/app
+    ports:
+      - "8001:8000"
+    environment:
+      - DEBUG=1
+      - ALLOWED_HOSTS=localhost,127.0.0.1
+      - SECRET_KEY=1243546547365
+    depends_on:
+      - redis-app-isca
+
+  celery-app-isca:
+    container_name: celery-app-isca
+    build:
+      context: ./isca_swim_scorer
+    volumes:
+      - ./isca_swim_scorer:/usr/src/app
+    ports:
+      - "8001:8000"
+    environment:
+      - DEBUG=1
+      - ALLOWED_HOSTS=localhost,127.0.0.1
+      - SECRET_KEY=1243546547365
+    depends_on:
+      - redis-app-isca
