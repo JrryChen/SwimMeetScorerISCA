@@ -4,7 +4,7 @@
 
   <div class="card">
     <div class="card-body">
-      <form method="post" enctype="multipart/form-data">
+      <form method="post" enctype="multipart/form-data" id="uploadForm">
         {% csrf_token %} {% if form.errors %}
         <div class="alert alert-danger">Please correct the errors below.</div>
         {% endif %}
@@ -15,8 +15,10 @@
           >
           {{ form.file }}
           <div class="form-text">
-            Upload a HY3 file exported from Meet Manager or a ZIP file
-            containing a single HY3 file.
+            <!-- Upload a HY3 file exported from Meet Manager or a ZIP file
+            containing a single HY3 file. -->
+            Upload a HY3 file exported from Meet Manager. You may have to unzip
+            the folder to retrieve it.
           </div>
           {% if form.file.errors %}
           <div class="invalid-feedback d-block">{{ form.file.errors }}</div>
@@ -31,10 +33,10 @@
           <div class="form-text">
             <ul class="mb-0">
               <li><strong>HY3</strong> - Direct export from Meet Manager</li>
-              <li>
+              <!-- <li>
                 <strong>ZIP</strong> - Compressed file containing a single HY3
                 file
-              </li>
+              </li> -->
             </ul>
           </div>
           {% if form.file_type.errors %}
@@ -58,12 +60,15 @@
         <div class="alert alert-info">
           <h5 class="alert-heading">File Requirements:</h5>
           <ul class="mb-0">
-            <li>Only HY3 files from Meet Manager are supported</li>
             <li>
-              If uploading a ZIP file, it must contain exactly one HY3 file
+              Currently <stong>ONLY</stong> HY3 files from Meet Manager are
+              supported so unzip the folder to retrieve it
             </li>
+            <!-- <li>
+              If uploading a ZIP file, it must contain exactly one HY3 file
+            </li> -->
             <li>
-              File names should follow the format: "Meet Name-DDMonYYYY" (e.g.,
+              File names usually follow the format: "Meet Name-DDMonYYYY" (e.g.,
               "Summer Meet-15Jun2024")
             </li>
           </ul>
@@ -79,4 +84,40 @@
     </div>
   </div>
 </div>
+{% endblock %} {% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const form = document.getElementById("uploadForm");
+    const fileInput = form.querySelector('input[type="file"]');
+    const fileTypeSelect = form.querySelector('select[name="file_type"]');
+
+    form.addEventListener("submit", function (e) {
+      const file = fileInput.files[0];
+      if (!file) {
+        e.preventDefault();
+        alert("Please select a file to upload.");
+        return;
+      }
+
+      const fileExt = file.name.split(".").pop().toLowerCase();
+      const selectedType = fileTypeSelect.value;
+
+      // Check if file extension matches selected type
+      if (selectedType === "HY3" && fileExt !== "hy3") {
+        e.preventDefault();
+        alert("When selecting HY3 file type, you must upload a .hy3 file");
+        return;
+      }
+
+      // Check if ZIP file is selected but file type is HY3
+      if (fileExt === "zip" && selectedType === "HY3") {
+        e.preventDefault();
+        alert(
+          "You have selected HY3 file type but uploaded a ZIP file. Please either:\n1. Change the file type to ZIP, or\n2. Upload the HY3 file directly"
+        );
+        return;
+      }
+    });
+  });
+</script>
 {% endblock %}

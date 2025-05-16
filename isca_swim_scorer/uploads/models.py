@@ -3,6 +3,7 @@ import os
 import uuid
 from core.models import TimeStampedModel
 from meets.models import Meet
+from django.utils.text import slugify
 
 # Create your models here.
 
@@ -21,7 +22,6 @@ class UploadedFile(TimeStampedModel):
 
     FILE_TYPES = (
         ('HY3', 'HY3 - Meet Manager Export'),
-        ('ZIP', 'ZIP - Compressed File (must contain HY3)'),
     )
 
     SOURCE_TYPES = (
@@ -40,6 +40,7 @@ class UploadedFile(TimeStampedModel):
     is_processed = models.BooleanField(default=False)
     processing_errors = models.TextField(blank=True)
     meet = models.ForeignKey(Meet, on_delete=models.SET_NULL, null=True, blank=True, related_name='files')
+    celery_task_id = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at']

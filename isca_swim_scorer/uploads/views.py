@@ -2,8 +2,9 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.views.generic import CreateView, ListView, DeleteView
 from django.urls import reverse_lazy
-from django.http import JsonResponse
+from django.http import JsonResponse, FileResponse
 from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
 from datetime import datetime, date
 from django.utils.text import slugify
 from django.db.models import F
@@ -13,6 +14,7 @@ import tempfile
 
 from .models import UploadedFile
 from .parser import process_hytek_file
+from .tasks import process_hytek_file_task
 from meets.models import Meet
 from scoring.scoring_system import ScoringSystem
 from core.utils import format_swim_time
@@ -21,6 +23,11 @@ class UploadedFileListView(ListView):
     model = UploadedFile
     template_name = 'uploads/file_list.html'
     context_object_name = 'files'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['download_url'] = reverse_lazy('uploads:upload-download')
+        return context
 
 class UploadedFileCreateView(CreateView):
     model = UploadedFile
@@ -65,20 +72,12 @@ class UploadedFileCreateView(CreateView):
         try:
             file_path = form.instance.file.path
             
-            # Handle ZIP files
-            if form.instance.file_type == 'ZIP':
-                if not file_path.lower().endswith('.zip'):
-                    raise ValueError("File must be a ZIP archive")
-                file_path = self.extract_hy3_from_zip(file_path)
-                form.instance.file_type = 'HY3'  # Change type to HY3 after extraction
-                form.instance.save()
-            
             # Process the file if it's a HY3 file
             if form.instance.file_type == 'HY3':
                 # Create a new meet if one doesn't exist
                 if not form.instance.meet:
                     # Extract meet name from filename
-                    meet_name = form.instance.original_filename.replace('.hy3', '').replace('.zip', '')
+                    meet_name = form.instance.original_filename.replace('.hy3', '')
                     
                     # Use today's date if we can't extract it from filename
                     meet_date = date.today()
@@ -102,14 +101,12 @@ class UploadedFileCreateView(CreateView):
                     form.instance.meet = meet
                     form.instance.save()
                 
-                # Process the file using our parser
-                results = process_hytek_file(file_path, meet=form.instance.meet)
-                
-                # Mark as processed
-                form.instance.is_processed = True
+                # Send task to Celery for processing
+                task = process_hytek_file_task.delay(form.instance.id, form.instance.meet.id)
+                form.instance.celery_task_id = task.id
                 form.instance.save()
                 
-                messages.success(self.request, 'File processed successfully!')
+                messages.success(self.request, 'File uploaded successfully! Processing will begin shortly.')
             
         except Exception as e:
             form.instance.processing_errors = str(e)
@@ -162,7 +159,6 @@ def get_file_results(request, pk):
         # scoring = ScoringSystem()
         
         for event in meet.events.all():
-            # print(event.name)
             event_results = []
             results_list = []
             
@@ -227,5 +223,109 @@ def get_file_results(request, pk):
         }, status=404)
     except Exception as e:
         return JsonResponse({
+            'error': str(e)
+        }, status=500)
+
+@require_http_methods(["GET"])
+def download_file(request, pk):
+    uploaded_file = get_object_or_404(UploadedFile, pk=pk)
+    file_path = uploaded_file.file.path
+    return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=uploaded_file.original_filename)
+
+@require_http_methods(["GET"])
+def get_file_status(request, pk):
+    """API endpoint to get the processing status of a file"""
+    try:
+        uploaded_file = UploadedFile.objects.get(pk=pk)
+        
+        if uploaded_file.is_processed:
+            return JsonResponse({
+                'status': 'success',
+                'message': 'File has been processed'
+            })
+            
+        if uploaded_file.celery_task_id:
+            return JsonResponse({
+                'status': 'processing',
+                'message': 'File is being processed'
+            })
+            
+        return JsonResponse({
+            'status': 'pending',
+            'message': 'File is pending processing'
+        })
+        
+    except UploadedFile.DoesNotExist:
+        return JsonResponse({
+            'status': 'error',
+            'error': 'File not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'status': 'error',
+            'error': str(e)
+        }, status=500)
+
+@require_http_methods(["POST"])
+def delete_file(request, pk):
+    """API endpoint to delete a file"""
+    try:
+        uploaded_file = get_object_or_404(UploadedFile, pk=pk)
+        
+        # Get the meet associated with this file
+        meet = uploaded_file.meet
+        
+        # Delete the file from storage
+        if uploaded_file.file:
+            if os.path.isfile(uploaded_file.file.path):
+                os.remove(uploaded_file.file.path)
+        
+        # Delete the database record
+        uploaded_file.delete()
+        
+        # If this was the last file for this meet, delete the meet too
+        if meet and not UploadedFile.objects.filter(meet=meet).exists():
+            meet.delete()
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'File deleted successfully'
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'status': 'error',
+            'error': str(e)
+        }, status=500)
+
+@require_http_methods(["POST"])
+def delete_all_files(request):
+    """API endpoint to delete all files"""
+    try:
+        # Get all files
+        files = UploadedFile.objects.all()
+        
+        # Delete each file from storage
+        for file in files:
+            if file.file and os.path.isfile(file.file.path):
+                os.remove(file.file.path)
+        
+        # Get all meets that will be orphaned
+        meets_to_delete = Meet.objects.filter(files__isnull=True)
+        
+        # Delete all files from database
+        files.delete()
+        
+        # Delete orphaned meets
+        meets_to_delete.delete()
+        
+        return JsonResponse({
+            'status': 'success',
+            'message': 'All files deleted successfully'
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'status': 'error',
             'error': str(e)
         }, status=500)

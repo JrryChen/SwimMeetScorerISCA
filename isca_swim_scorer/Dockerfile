@@ -21,5 +21,7 @@ COPY . /usr/src/app/
 # Install the local hytek-parser package
 RUN pip install -e uploads/hytek-parser
 
+CMD ["python", "manage.py", "migrate"] 
+
 # Command to run the application
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"] 
+# CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"] 

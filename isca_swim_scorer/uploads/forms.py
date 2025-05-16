@@ -1,12 +1,15 @@
 from django import forms
 from uploads.models import UploadedFile
+import os
 
-class UploadFileForm(forms.Form):
+class UploadFileForm(forms.ModelForm):
     """
-    Form for uploading a file
+    Form for uploading a file using the UploadedFile model
     """
 
-    file = forms.FileField(label='Select a file to upload', help_text='Supported file types: .hy3, .cl2, .zip (Max size: 10MB)')
+    class Meta:
+        model = UploadedFile
+        fields = ['file', 'file_type', 'source_type']
 
     def clean_file(self):
         file = self.cleaned_data.get('file')
@@ -15,10 +18,8 @@ class UploadFileForm(forms.Form):
             raise forms.ValidationError('File size must be less than 10MB')
         
         ext = os.path.splitext(file.name)[1].lower()
-        valid_extensions = ['.hy3', '.cl2', '.zip']
-
-        if ext not in valid_extensions:
-            raise forms.ValidationError('Invalid file type. Supported types: .hy3, .cl2, .zip')
+        if ext != '.hy3':
+            raise forms.ValidationError('Only HY3 files are supported')
         
         return file
     

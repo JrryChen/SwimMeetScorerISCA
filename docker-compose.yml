@@ -8,12 +8,13 @@ services:
     container_name: django-app-isca
     build:
       context: ./isca_swim_scorer
+    command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ./isca_swim_scorer:/usr/src/app
     ports:
       - "8001:8000"
     environment:
-      - DEBUG=1
+      - DEBUG=True
       - ALLOWED_HOSTS=localhost,127.0.0.1
       - SECRET_KEY=1243546547365
     depends_on:
@@ -23,13 +24,13 @@ services:
     container_name: celery-app-isca
     build:
       context: ./isca_swim_scorer
+    command: celery --app=isca_swim_scorer worker --loglevel=info
     volumes:
       - ./isca_swim_scorer:/usr/src/app
-    ports:
-      - "8001:8000"
     environment:
       - DEBUG=1
       - ALLOWED_HOSTS=localhost,127.0.0.1
       - SECRET_KEY=1243546547365
     depends_on:
       - redis-app-isca
+      - django-app-isca
