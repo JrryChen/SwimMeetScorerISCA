@@ -11,4 +11,7 @@ urlpatterns = [
     path('<int:pk>/results/', views.get_file_results, name='upload-results'),
     path('<int:pk>/download/', views.download_file, name='upload-download'),
     path('<int:pk>/status/', views.get_file_status, name='upload-status'),
+    path('<int:file_id>/export-results/', views.export_results, name='upload-export-results'),
+    path('exports/<int:meet_id>/', views.download_export_zip, name='download-export-zip'),
+    path('exports-status/<int:meet_id>/', views.get_export_status, name='export-status'),
 ] 

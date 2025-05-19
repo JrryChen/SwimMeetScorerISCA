@@ -30,6 +30,7 @@
         <tr
           data-file-id="{{ file.id }}"
           data-celery-task-id="{{ file.celery_task_id }}"
+          data-meet-id="{{ file.meet.id }}"
         >
           <td>{{ file.original_filename }}</td>
           <td>{{ file.get_file_type_display }}</td>
@@ -57,6 +58,12 @@
             >
               View Results
             </button>
+            <button
+              class="btn btn-sm btn-success export-results"
+              data-file-id="{{ file.id }}"
+            >
+              Export Results
+            </button>
             {% endif %}
             <button
               class="btn btn-sm btn-danger delete-file"
@@ -81,7 +88,7 @@
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Meet Results</h5>
+        <h5 class="modal-title">Meet Results (Individual Events Only)</h5>
         <button
           type="button"
           class="btn-close"
@@ -183,14 +190,26 @@
                 viewResultsBtn.textContent = "View Results";
                 viewResultsBtn.addEventListener("click", showResults);
 
+                // Add Export Results button
+                const exportResultsBtn = document.createElement("button");
+                exportResultsBtn.className =
+                  "btn btn-sm btn-success export-results";
+                exportResultsBtn.dataset.fileId = fileId;
+                exportResultsBtn.textContent = "Export Results";
+                exportResultsBtn.addEventListener("click", function () {
+                  exportResults(this.dataset.fileId);
+                });
+
                 // Find the delete button to insert before it
                 const deleteBtn = actionsCell.querySelector(".btn-danger");
                 if (deleteBtn) {
                   actionsCell.insertBefore(viewResultsBtn, deleteBtn);
-                  console.log("Button added successfully"); // Debug log
+                  actionsCell.insertBefore(exportResultsBtn, deleteBtn);
+                  console.log("Buttons added successfully"); // Debug log
                 } else {
                   console.log("Delete button not found"); // Debug log
                   actionsCell.appendChild(viewResultsBtn);
+                  actionsCell.appendChild(exportResultsBtn);
                 }
               } else {
                 console.log("View Results button already exists"); // Debug log
@@ -315,6 +334,82 @@
       }
     }
 
+    // Function to export results
+    async function exportResults(fileId) {
+      const button = document.querySelector(
+        `.export-results[data-file-id="${fileId}"]`
+      );
+      const originalText = button.textContent;
+      try {
+        button.disabled = true;
+        button.innerHTML =
+          '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Exporting...';
+        // Get the meet ID from the row
+        const row = button.closest("tr");
+        const meetId = row ? row.getAttribute("data-meet-id") : null;
+        if (!meetId) {
+          alert("Meet ID not found.");
+          return;
+        }
+        // 1. Check if export zip exists
+        let statusResp = await fetch(`/uploads/exports-status/${meetId}/`);
+        let statusData = await statusResp.json();
+        if (statusData.status === "ready") {
+          triggerDownload(statusData.download_url);
+          return;
+        }
+        // 2. If not, trigger export
+        const response = await fetch(`/uploads/${fileId}/export-results/`, {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": getCSRFToken(),
+            "Content-Type": "application/json",
+          },
+        });
+        const data = await response.json();
+        if (data.status === "ready") {
+          triggerDownload(data.download_url);
+        } else if (data.status === "processing" && meetId) {
+          await pollExportReady(meetId);
+        } else {
+          throw new Error(data.error || "Export failed");
+        }
+      } catch (error) {
+        console.error("Error exporting results:", error);
+        alert("Error exporting results: " + error.message);
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+
+    // Helper to trigger download
+    function triggerDownload(url) {
+      const link = document.createElement("a");
+      link.href = url;
+      // The filename will be set by the server's Content-Disposition header
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    // Poll until export is ready
+    async function pollExportReady(meetId) {
+      let tries = 0;
+      while (tries < 30) {
+        // up to 1 minute
+        let resp = await fetch(`/uploads/exports-status/${meetId}/`);
+        let data = await resp.json();
+        if (data.status === "ready") {
+          triggerDownload(data.download_url);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        tries++;
+      }
+      alert("Export is taking too long. Please try again later.");
+    }
+
     // Add click handlers for view results buttons
     document.querySelectorAll(".view-results").forEach((button) => {
       button.addEventListener("click", showResults);
@@ -353,6 +448,13 @@
         }
         deleteModal.hide();
       });
+
+    // Add click handlers for export buttons
+    document.querySelectorAll(".export-results").forEach((button) => {
+      button.addEventListener("click", function () {
+        exportResults(this.dataset.fileId);
+      });
+    });
 
     // Start checking processing status
     checkProcessingStatus();

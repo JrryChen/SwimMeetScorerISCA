@@ -11,10 +11,11 @@ from django.db.models import F
 import zipfile
 import os
 import tempfile
+from django.conf import settings
 
 from .models import UploadedFile
 from .parser import process_hytek_file
-from .tasks import process_hytek_file_task
+from .tasks import process_hytek_file_task, export_meet_results_task
 from meets.models import Meet
 from scoring.scoring_system import ScoringSystem
 from core.utils import format_swim_time
@@ -324,6 +325,82 @@ def delete_all_files(request):
             'message': 'All files deleted successfully'
         })
         
+    except Exception as e:
+        return JsonResponse({
+            'status': 'error',
+            'error': str(e)
+        }, status=500)
+
+def get_export_zip_path(meet_id):
+    export_dir = os.path.join(settings.MEDIA_ROOT, 'exports')
+    zip_filename = f"meet_{meet_id}_results.zip"
+    return os.path.join(export_dir, zip_filename)
+
+@require_http_methods(["POST"])
+def export_results(request, file_id):
+    """API endpoint to export meet results as CSV files or trigger export if missing"""
+    try:
+        uploaded_file = get_object_or_404(UploadedFile, id=file_id)
+        if not uploaded_file.meet:
+            return JsonResponse({'status': 'error', 'error': 'No meet associated with this file'})
+        meet_id = uploaded_file.meet.id
+        zip_path = get_export_zip_path(meet_id)
+        if os.path.exists(zip_path):
+            # Already exported, return ready status
+            return JsonResponse({'status': 'ready', 'download_url': f'/uploads/exports/{meet_id}/'})
+        # Start the export task
+        task = export_meet_results_task.delay(meet_id)
+        return JsonResponse({'status': 'processing', 'task_id': task.id})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'error': str(e)})
+
+@require_http_methods(["GET"])
+def get_export_status(request, meet_id):
+    """API endpoint to check if export zip exists for a meet"""
+    zip_path = get_export_zip_path(meet_id)
+    if os.path.exists(zip_path):
+        return JsonResponse({'status': 'ready', 'download_url': f'/uploads/exports/{meet_id}/'})
+    return JsonResponse({'status': 'processing'})
+
+@require_http_methods(["GET"])
+def download_export_zip(request, meet_id):
+    """Download the exported zip file for a meet"""
+    zip_path = get_export_zip_path(meet_id)
+    if not os.path.exists(zip_path):
+        return JsonResponse({'status': 'error', 'error': 'Export file not found'}, status=404)
+    
+    # Get the meet name for the zip file
+    meet = get_object_or_404(Meet, id=meet_id)
+    zip_filename = f"{meet.name}_results.zip"
+    
+    response = FileResponse(open(zip_path, 'rb'), as_attachment=True)
+    response['Content-Disposition'] = f'attachment; filename="{zip_filename}"'
+    return response
+
+@require_http_methods(["GET"])
+def get_task_status(request, task_id):
+    """API endpoint to check the status of a Celery task"""
+    try:
+        # Find the uploaded file with this task ID
+        uploaded_file = UploadedFile.objects.get(celery_task_id=task_id)
+        
+        if uploaded_file.is_processed:
+            return JsonResponse({
+                'status': 'success',
+                'file_id': uploaded_file.id,
+                'filename': uploaded_file.original_filename
+            })
+            
+        return JsonResponse({
+            'status': 'processing',
+            'message': 'Export in progress'
+        })
+        
+    except UploadedFile.DoesNotExist:
+        return JsonResponse({
+            'status': 'error',
+            'error': 'Task not found'
+        }, status=404)
     except Exception as e:
         return JsonResponse({
             'status': 'error',

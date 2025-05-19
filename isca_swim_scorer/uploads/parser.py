@@ -73,6 +73,12 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
 
         for event_id in event_ids:
             event = events[event_id]
+            
+            # Skip relay events completely
+            if event.relay:
+                logger.info(f"Skipping relay event: {event.number}")
+                continue
+                
             event_name = get_event_name(event, meet_course.name)
             event_results = []
 
@@ -106,7 +112,9 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                 final_time = format_swim_time(entry.finals_time) if entry.finals_time and entry.finals_time > 0 else "-"
                 
                 # Calculate points using best_time
-                point_age = swimmer.age if swimmer.age and swimmer.age > 0 else None
+                point_age = None  # Don't use age for points in relay events
+                if not event.relay:
+                    point_age = entry.swimmers[0].age if entry.swimmers[0].age and entry.swimmers[0].age > 0 else None
                 
                 # Determine best time
                 best_time = None
@@ -117,24 +125,23 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                 elif entry.swimoff_time and entry.swimoff_time > 0:
                     best_time = entry.swimoff_time
                 
-
                 # Calculate points
                 points = None
                 if best_time:
-                    points = round(scoring.calculate_points(event_name, best_time, point_age, event.age_max, swimmer.gender), 2)
+                    points = round(scoring.calculate_points(event_name, best_time, point_age, event.age_max, gender), 2)
                 
                 result_entry = {
                     "swimmer": swimmer_name,
-                    "raw_age": swimmer.age,
+                    "raw_age": point_age,
                     "prelim_time": prelim_time,
                     "swimoff_time": swimoff_time,
                     "final_time": final_time,
                     "points": points,
                     "gender": gender,
-                    "team_code": swimmer.team_code,
-                    "team_name": parsed_file.meet.teams.get(swimmer.team_code, Team(name="Unknown Team")).name,
-                    "swimmer_meet_id": str(swimmer.meet_id),
-                    "usa_swimming_id": swimmer.usa_swimming_id
+                    "team_code": entry.swimmers[0].team_code,
+                    "team_name": parsed_file.meet.teams.get(entry.swimmers[0].team_code, Team(name="Unknown Team")).name,
+                    "swimmer_meet_id": str(entry.swimmers[0].meet_id),
+                    "usa_swimming_id": entry.swimmers[0].usa_swimming_id
                 }
                 event_results.append(result_entry)
 
@@ -143,25 +150,39 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
                     # Get or create the team
                     team, _ = Team.objects.get_or_create(
                         meet=meet,
-                        code=swimmer.team_code,
+                        code=entry.swimmers[0].team_code,
                         defaults={
-                            'name': parsed_file.meet.teams.get(swimmer.team_code, "Unknown Team").name,
-                            'short_name': swimmer.team_code
+                            'name': parsed_file.meet.teams.get(entry.swimmers[0].team_code, "Unknown Team").name,
+                            'short_name': entry.swimmers[0].team_code
                         }
                     )
 
-                    # Get or create the swimmer
-                    swimmer_obj, _ = Swimmer.objects.get_or_create(
-                        meet=meet,
-                        team=team,
-                        swimmer_meet_id=swimmer.meet_id,
-                        defaults={
-                            'first_name': swimmer.first_name,
-                            'last_name': swimmer.last_name,
-                            'gender': swimmer.gender.name,
-                            'age': swimmer.age if swimmer.age and swimmer.age > 0 else None
-                        }
-                    )
+                    if event.relay:
+                        # For relay events, create a special swimmer entry with team name
+                        swimmer_obj, _ = Swimmer.objects.get_or_create(
+                            meet=meet,
+                            team=team,
+                            swimmer_meet_id=f"RELAY_{entry.swimmers[0].team_code}_{event.number}",
+                            defaults={
+                                'first_name': team.name,
+                                'last_name': f"Relay {event.number}",
+                                'gender': gender,
+                                'age': None  # No age for relay teams
+                            }
+                        )
+                    else:
+                        # For individual events, create normal swimmer entry
+                        swimmer_obj, _ = Swimmer.objects.get_or_create(
+                            meet=meet,
+                            team=team,
+                            swimmer_meet_id=entry.swimmers[0].meet_id,
+                            defaults={
+                                'first_name': entry.swimmers[0].first_name,
+                                'last_name': entry.swimmers[0].last_name,
+                                'gender': gender,
+                                'age': entry.swimmers[0].age if entry.swimmers[0].age and entry.swimmers[0].age > 0 else None
+                            }
+                        )
 
                     # Create the result
                     result = Result.objects.create(
@@ -174,17 +195,13 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
 
                     # Calculate points for each time
                     if result.prelim_time:
-                        result.prelim_points = scoring.calculate_points(event_name, result.prelim_time, swimmer.age, event.age_max, swimmer.gender)
-                        logger.info(f"Prelim points for {swimmer_obj.full_name} in {event_name}: {result.prelim_points}")
+                        result.prelim_points = scoring.calculate_points(event_name, result.prelim_time, point_age, event.age_max, gender)
                     if result.swim_off_time:
-                        result.swim_off_points = scoring.calculate_points(event_name, result.swim_off_time, swimmer.age, event.age_max, swimmer.gender)
-                        logger.info(f"Swim-off points for {swimmer_obj.full_name} in {event_name}: {result.swim_off_points}")
+                        result.swim_off_points = scoring.calculate_points(event_name, result.swim_off_time, point_age, event.age_max, gender)
                     if result.final_time:
-                        result.final_points = scoring.calculate_points(event_name, result.final_time, swimmer.age, event.age_max, swimmer.gender)
-                        logger.info(f"Final points for {swimmer_obj.full_name} in {event_name}: {result.final_points}")
+                        result.final_points = scoring.calculate_points(event_name, result.final_time, point_age, event.age_max, gender)
 
                     result.best_points = max(result.prelim_points, result.swim_off_points, result.final_points)
-                    logger.info(f"Best points for {swimmer_obj.full_name} in {event_name}: {result.best_points}")
                     result.save()
 
             # Sort by final time, ignoring missing or zero times
