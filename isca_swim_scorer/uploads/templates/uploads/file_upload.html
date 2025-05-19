@@ -33,10 +33,10 @@
           <div class="form-text">
             <ul class="mb-0">
               <li><strong>HY3</strong> - Direct export from Meet Manager</li>
-              <!-- <li>
-                <strong>ZIP</strong> - Compressed file containing a single HY3
-                file
-              </li> -->
+              <li>
+                <strong>ZIP</strong> - Compressed file containing a HY3 file
+                (e.g. from Meet Manager)
+              </li>
             </ul>
           </div>
           {% if form.file_type.errors %}
@@ -60,13 +60,10 @@
         <div class="alert alert-info">
           <h5 class="alert-heading">File Requirements:</h5>
           <ul class="mb-0">
+            <li>Currently only HY3 files from Meet Manager are supported</li>
             <li>
-              Currently <stong>ONLY</stong> HY3 files from Meet Manager are
-              supported so unzip the folder to retrieve it
-            </li>
-            <!-- <li>
               If uploading a ZIP file, it must contain exactly one HY3 file
-            </li> -->
+            </li>
             <li>
               File names usually follow the format: "Meet Name-DDMonYYYY" (e.g.,
               "Summer Meet-15Jun2024")
@@ -109,11 +106,22 @@
         return;
       }
 
-      // Check if ZIP file is selected but file type is HY3
-      if (fileExt === "zip" && selectedType === "HY3") {
+      if (selectedType === "ZIP" && fileExt !== "zip") {
+        e.preventDefault();
+        alert("When selecting ZIP file type, you must upload a .zip file");
+        return;
+      }
+
+      // Check if file type doesn't match selected type
+      if (
+        (fileExt === "zip" && selectedType === "HY3") ||
+        (fileExt === "hy3" && selectedType === "ZIP")
+      ) {
         e.preventDefault();
         alert(
-          "You have selected HY3 file type but uploaded a ZIP file. Please either:\n1. Change the file type to ZIP, or\n2. Upload the HY3 file directly"
+          "The file type you selected doesn't match the file you uploaded. Please either:\n" +
+            "1. Change the file type to match your file, or\n" +
+            "2. Upload a different file that matches the selected type"
         );
         return;
       }

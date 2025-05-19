@@ -51,7 +51,7 @@
               class="btn btn-sm btn-success"
               >Download</a
             >
-            {% if file.is_processed and file.file_type == 'HY3' %}
+            {% if file.is_processed %}
             <button
               class="btn btn-sm btn-info view-results"
               data-file-id="{{ file.id }}"

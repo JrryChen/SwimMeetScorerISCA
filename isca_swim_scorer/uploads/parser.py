@@ -1,6 +1,8 @@
 import sys
 import os
 import logging
+import zipfile
+import tempfile
 from typing import Dict, List
 from django.db import transaction
 from django.utils.text import slugify
@@ -44,6 +46,38 @@ def get_event_name(event, course: str) -> str:
     }.get(event.stroke, "Unknown")
     return f"{gender_text} {event.distance} {stroke_str} ({course})"
 
+def extract_hy3_from_zip(zip_path: str) -> str:
+    """
+    Extract HY3 file from ZIP archive.
+    
+    Args:
+        zip_path: Path to the ZIP file
+        
+    Returns:
+        Path to the extracted HY3 file
+        
+    Raises:
+        ValueError: If ZIP doesn't contain exactly one HY3 file
+    """
+    hy3_files = []
+    
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        # Find all HY3 files in the ZIP
+        for file in zip_ref.namelist():
+            if file.lower().endswith('.hy3'):
+                hy3_files.append(file)
+        
+        if not hy3_files:
+            raise ValueError("No HY3 files found in the ZIP archive")
+        if len(hy3_files) > 1:
+            raise ValueError("ZIP archive contains multiple HY3 files. Please include only one HY3 file.")
+            
+        # Extract the HY3 file to a temporary directory
+        temp_dir = tempfile.mkdtemp()
+        zip_ref.extract(hy3_files[0], temp_dir)
+        
+        return os.path.join(temp_dir, hy3_files[0])
+
 @transaction.atomic
 def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict]]:
     """
@@ -58,6 +92,12 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
     """
     try:
         logger.info(f"Starting to process Hytek file: {file_path}")
+        
+        # Check if file is a ZIP and extract if needed
+        if file_path.lower().endswith('.zip'):
+            logger.info("Detected ZIP file, extracting HY3 file...")
+            file_path = extract_hy3_from_zip(file_path)
+            logger.info(f"Extracted HY3 file to: {file_path}")
         
         # Parse the file
         parsed_file = hy3_parser.parse_hy3(file_path)

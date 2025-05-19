@@ -62,9 +62,42 @@ def process_hytek_file_task(self, file_id: int, meet_id: Optional[int] = None) -
         
         # Process the file
         try:
-            results = process_hytek_file(uploaded_file.file.path, meet)
+            # Check if file is a ZIP and extract if needed
+            file_path = uploaded_file.file.path
+            if uploaded_file.file_type == 'ZIP':
+                logger.info(f"Processing ZIP file: {uploaded_file.original_filename}")
+                try:
+                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                        # Find all HY3 files in the ZIP
+                        hy3_files = [f for f in zip_ref.namelist() if f.lower().endswith('.hy3')]
+                        
+                        if not hy3_files:
+                            raise ValueError("No HY3 files found in the ZIP archive")
+                        if len(hy3_files) > 1:
+                            raise ValueError("ZIP archive contains multiple HY3 files. Please include only one HY3 file.")
+                        
+                        # Extract the HY3 file to a temporary directory
+                        temp_dir = tempfile.mkdtemp()
+                        zip_ref.extract(hy3_files[0], temp_dir)
+                        file_path = os.path.join(temp_dir, hy3_files[0])
+                        logger.info(f"Extracted HY3 file to: {file_path}")
+                except zipfile.BadZipFile:
+                    raise ValueError("Invalid ZIP file format")
+                except Exception as e:
+                    raise ValueError(f"Error processing ZIP file: {str(e)}")
+            
+            results = process_hytek_file(file_path, meet)
+            
+            # Clean up temporary directory if it was created
+            if uploaded_file.file_type == 'ZIP' and os.path.exists(os.path.dirname(file_path)):
+                import shutil
+                shutil.rmtree(os.path.dirname(file_path))
+                
         except Exception as e:
             logger.error(f"Error processing file {file_id}: {str(e)}")
+            # Update the uploaded file with the error
+            uploaded_file.processing_errors = str(e)
+            uploaded_file.save()
             raise
         
         # Update the uploaded file status

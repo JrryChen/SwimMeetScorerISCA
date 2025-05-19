@@ -73,12 +73,12 @@ class UploadedFileCreateView(CreateView):
         try:
             file_path = form.instance.file.path
             
-            # Process the file if it's a HY3 file
-            if form.instance.file_type == 'HY3':
+            # Process the file based on its type
+            if form.instance.file_type in ['HY3', 'ZIP']:
                 # Create a new meet if one doesn't exist
                 if not form.instance.meet:
                     # Extract meet name from filename
-                    meet_name = form.instance.original_filename.replace('.hy3', '')
+                    meet_name = form.instance.original_filename.replace('.hy3', '').replace('.zip', '')
                     
                     # Use today's date if we can't extract it from filename
                     meet_date = date.today()
@@ -149,7 +149,7 @@ def get_file_results(request, pk):
                 'error': 'File has not been processed yet'
             }, status=400)
             
-        if uploaded_file.file_type != 'HY3':
+        if uploaded_file.file_type not in ['HY3', 'ZIP']:
             return JsonResponse({
                 'error': 'File type not supported for results'
             }, status=400)
