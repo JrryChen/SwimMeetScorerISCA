@@ -61,6 +61,7 @@ def parse_hy3(
 
             parsed_file = line_parser(line, parsed_file, opts)
         except Exception as e:
+            print(line)
             msg = "Exception while parsing, please open an issue with full traceback at https://github.com/SwimComm/hytek-parser/issues/new/choose" + "\n" + line
             raise RuntimeError(msg) from e  # TODO: actual error handling
 

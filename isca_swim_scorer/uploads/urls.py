@@ -14,4 +14,9 @@ urlpatterns = [
     path('<int:file_id>/export-results/', views.export_results, name='upload-export-results'),
     path('exports/<int:meet_id>/', views.download_export_zip, name='download-export-zip'),
     path('exports-status/<int:meet_id>/', views.get_export_status, name='export-status'),
+    # Combined results endpoints
+    path('combined-results/', views.get_combined_results, name='combined-results'),
+    path('export-combined-results/', views.export_combined_results, name='export-combined-results'),
+    path('exports/combined/', views.download_combined_export_zip, name='download-combined-export-zip'),
+    path('exports-status/combined/', views.get_combined_export_status, name='combined-export-status'),
 ] 

@@ -19,6 +19,7 @@ from .tasks import process_hytek_file_task, export_meet_results_task
 from meets.models import Meet
 from scoring.scoring_system import ScoringSystem
 from core.utils import format_swim_time
+from core.models import Gender, Stroke, Course
 
 class UploadedFileListView(ListView):
     model = UploadedFile
@@ -184,6 +185,7 @@ def get_file_results(request, pk):
                 result_data = {
                     'swimmer': result.swimmer.full_name,
                     'age': display_age,
+                    'team_code': result.swimmer.team.code if result.swimmer.team else None,
                     'prelim_time': prelim_time,
                     'swimoff_time': swimoff_time,
                     'final_time': final_time,
@@ -406,3 +408,112 @@ def get_task_status(request, task_id):
             'status': 'error',
             'error': str(e)
         }, status=500)
+
+# --- Combined Results Views ---
+def get_combined_export_zip_path():
+    export_dir = os.path.join(settings.MEDIA_ROOT, 'exports')
+    zip_filename = "combined_results.zip"
+    return os.path.join(export_dir, zip_filename)
+
+@require_http_methods(["GET"])
+def get_combined_results(request):
+    """API endpoint to get combined results from all meets as JSON, grouped by event type and reporting age band."""
+    from meets.models import Event, Result
+    from core.models import Gender, Stroke, Course
+    from collections import defaultdict
+
+    # Define reporting age bands
+    def get_reporting_age_band(age):
+        if age is None or age < 6:
+            return None
+        if 6 <= age <= 14:
+            return str(age)
+        if age >= 15:
+            return "15-18+"
+        return None
+
+    def event_type_key(event):
+        return (
+            event.gender,
+            event.distance,
+            event.stroke,
+            event.meet.course,
+        )
+
+    def event_type_display(event):
+        gender_map = {Gender.MALE: "Men", Gender.FEMALE: "Women", Gender.MIXED: "Mixed", Gender.UNKNOWN: "Unknown"}
+        gender_text = gender_map.get(event.gender, "Unknown")
+        stroke_display = event.get_stroke_display() if hasattr(event, 'get_stroke_display') else event.stroke
+        course_text = f"({event.meet.course})"
+        return f"{gender_text} {event.distance} {stroke_display} {course_text}"
+
+    # Gather all results and group by (event type, reporting age band)
+    grouped_results = defaultdict(list)
+    event_type_names = {}
+    for event in Event.objects.all():
+        type_key = event_type_key(event)
+        if type_key not in event_type_names:
+            event_type_names[type_key] = event_type_display(event)
+        for result in event.results.all():
+            swimmer_age = result.swimmer.age if result.swimmer.age and result.swimmer.age > 0 else None
+            age_band = get_reporting_age_band(swimmer_age)
+            if not age_band:
+                continue  # skip if no valid age
+            prelim_time = format_swim_time(result.prelim_time) if result.prelim_time and result.prelim_time > 0 else "-"
+            swimoff_time = format_swim_time(result.swim_off_time) if result.swim_off_time and result.swim_off_time > 0 else "-"
+            final_time = format_swim_time(result.final_time) if result.final_time and result.final_time > 0 else "-"
+            best_time = result.best_time if hasattr(result, 'best_time') else (result.final_time or result.prelim_time or result.swim_off_time or float('inf'))
+            result_data = {
+                'meet': result.event.meet.name,
+                'swimmer': result.swimmer.full_name,
+                'age': swimmer_age,
+                'team_code': result.swimmer.team.code if result.swimmer.team else None,
+                'prelim_time': prelim_time,
+                'swimoff_time': swimoff_time,
+                'final_time': final_time,
+                'prelim_points': f"{result.prelim_points:.2f}" if result.prelim_points > 0 else None,
+                'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else None,
+                'final_points': f"{result.final_points:.2f}" if result.final_points > 0 else None,
+                'best_points': f"{result.best_points:.2f}" if result.best_points > 0 else None,
+                '_sort_time': best_time if best_time and best_time > 0 else float('inf'),
+            }
+            group_label = f"{event_type_names[type_key]} - Age {age_band}"
+            grouped_results[group_label].append(result_data)
+
+    # Sort each group by best time
+    for group in grouped_results:
+        grouped_results[group].sort(key=lambda x: x['_sort_time'])
+        for r in grouped_results[group]:
+            del r['_sort_time']
+
+    return JsonResponse({'results': grouped_results})
+
+@require_http_methods(["POST"])
+def export_combined_results(request):
+    """API endpoint to export combined results as CSV/ZIP or trigger export if missing"""
+    try:
+        zip_path = get_combined_export_zip_path()
+        if os.path.exists(zip_path):
+            return JsonResponse({'status': 'ready', 'download_url': '/uploads/exports/combined/'})
+        from .tasks import export_combined_results_task
+        task = export_combined_results_task.delay()
+        return JsonResponse({'status': 'processing', 'task_id': task.id})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'error': str(e)})
+
+@require_http_methods(["GET"])
+def get_combined_export_status(request):
+    zip_path = get_combined_export_zip_path()
+    if os.path.exists(zip_path):
+        return JsonResponse({'status': 'ready', 'download_url': '/uploads/exports/combined/'})
+    return JsonResponse({'status': 'processing'})
+
+@require_http_methods(["GET"])
+def download_combined_export_zip(request):
+    zip_path = get_combined_export_zip_path()
+    if not os.path.exists(zip_path):
+        return JsonResponse({'status': 'error', 'error': 'Export file not found'}, status=404)
+    zip_filename = "combined_results.zip"
+    response = FileResponse(open(zip_path, 'rb'), as_attachment=True)
+    response['Content-Disposition'] = f'attachment; filename="{zip_filename}"'
+    return response

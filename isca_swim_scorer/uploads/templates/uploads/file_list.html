@@ -10,6 +10,12 @@
     {% if files %}
     <button id="deleteAllBtn" class="btn btn-danger">Delete All Files</button>
     {% endif %}
+    <button id="viewCombinedResultsBtn" class="btn btn-info">
+      View Combined Results
+    </button>
+    <button id="exportCombinedResultsBtn" class="btn btn-success">
+      Export Combined Results
+    </button>
   </div>
 
   {% if files %}
@@ -83,9 +89,9 @@
   {% endif %}
 </div>
 
-<!-- Results Modal -->
-<div class="modal fade" id="resultsModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+<!-- View Results Modal -->
+<div class="modal fade" id="viewResultsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">Meet Results (Individual Events Only)</h5>
@@ -93,10 +99,15 @@
           type="button"
           class="btn-close"
           data-bs-dismiss="modal"
+          aria-label="Close"
         ></button>
       </div>
       <div class="modal-body">
-        <div id="resultsContent"></div>
+        <div id="viewResultsContent" class="mb-2">
+          <div class="text-center">
+            <div class="spinner-border" role="status"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -129,17 +140,68 @@
   </div>
 </div>
 
+<!-- Export Wait Modal -->
+<div class="modal fade" id="exportWaitModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-body text-center">
+        <div class="spinner-border text-primary mb-3" role="status"></div>
+        <p>Exporting results. This may take several minutes. Please wait...</p>
+        <button type="button" class="btn btn-danger mt-3" id="cancelExportBtn">
+          Cancel Export
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Combined Results Modal -->
+<div
+  class="modal fade"
+  id="combinedResultsModal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          Combined Meet Results (All Meets, Individual Events Only)
+        </h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <div id="combinedResultsContent" class="mb-2">
+          <div class="text-center">
+            <div class="spinner-border" role="status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %} {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
-    const resultsModal = new bootstrap.Modal(
-      document.getElementById("resultsModal")
+    const viewResultsModal = new bootstrap.Modal(
+      document.getElementById("viewResultsModal")
     );
     const deleteModal = new bootstrap.Modal(
       document.getElementById("deleteModal")
     );
+    const combinedResultsModal = new bootstrap.Modal(
+      document.getElementById("combinedResultsModal")
+    );
     let fileToDelete = null;
     let isRefreshing = false; // Add flag to track refresh state
+    let currentExportMeetId = null;
+    let exportCancelled = false;
 
     // Function to get CSRF token
     function getCSRFToken() {
@@ -179,18 +241,16 @@
 
             console.log("File type:", fileType); // Debug log
 
-            if (fileType === "HY3 - Meet Manager Export") {
+            if (fileType.includes("HY3")) {
               // Check if View Results button already exists
               const existingBtn = actionsCell.querySelector(".view-results");
               if (!existingBtn) {
-                console.log("Adding View Results button"); // Debug log
                 const viewResultsBtn = document.createElement("button");
                 viewResultsBtn.className = "btn btn-sm btn-info view-results";
                 viewResultsBtn.dataset.fileId = fileId;
                 viewResultsBtn.textContent = "View Results";
                 viewResultsBtn.addEventListener("click", showResults);
 
-                // Add Export Results button
                 const exportResultsBtn = document.createElement("button");
                 exportResultsBtn.className =
                   "btn btn-sm btn-success export-results";
@@ -205,14 +265,10 @@
                 if (deleteBtn) {
                   actionsCell.insertBefore(viewResultsBtn, deleteBtn);
                   actionsCell.insertBefore(exportResultsBtn, deleteBtn);
-                  console.log("Buttons added successfully"); // Debug log
                 } else {
-                  console.log("Delete button not found"); // Debug log
                   actionsCell.appendChild(viewResultsBtn);
                   actionsCell.appendChild(exportResultsBtn);
                 }
-              } else {
-                console.log("View Results button already exists"); // Debug log
               }
             }
 
@@ -230,30 +286,48 @@
       }
     }
 
-    // Function to show results
+    // Function to show results in the new modal
     async function showResults(event) {
-      event.preventDefault(); // Prevent default button behavior
+      event?.preventDefault?.();
       const fileId = this.dataset.fileId;
-      const resultsContent = document.getElementById("resultsContent");
+      const resultsContent = document.getElementById("viewResultsContent");
       resultsContent.innerHTML =
         '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
-
+      viewResultsModal.show();
       try {
         const response = await fetch(`/uploads/${fileId}/results/`);
         const data = await response.json();
-
         if (response.ok) {
           let html = "";
           for (const [eventName, results] of Object.entries(data.results)) {
+            // Only show events with at least one result with points
+            const hasPoints = results.some((result) => {
+              // Consider a point value present if it's not null/undefined/empty/zero
+              return [
+                result.prelim_points,
+                result.swimoff_points,
+                result.final_points,
+                result.best_points,
+              ].some(
+                (p) =>
+                  p !== null &&
+                  p !== undefined &&
+                  p !== "-" &&
+                  p !== 0 &&
+                  p !== "0.00"
+              );
+            });
+            if (!hasPoints) continue;
             html += `<h4>${eventName}</h4>`;
             html += '<table class="table table-sm">';
             html +=
-              "<thead><tr><th>Swimmer</th><th>Age</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
+              "<thead><tr><th>Swimmer</th><th>Age</th><th>Team</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
             html += "<tbody>";
             for (const result of results) {
               html += `<tr>
                   <td>${result.swimmer}</td>
                   <td>${result.age}</td>
+                  <td>${result.team_code || "-"}</td>
                   <td>${result.prelim_time || "-"}</td>
                   <td>${result.prelim_points || "-"}</td>
                   <td>${result.swimoff_time || "-"}</td>
@@ -265,17 +339,18 @@
             }
             html += "</tbody></table>";
           }
+          if (!html) {
+            html =
+              '<div class="alert alert-info">No events with points to display.</div>';
+          }
           resultsContent.innerHTML = html;
-          resultsModal.show();
         } else {
           resultsContent.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
-          resultsModal.show();
         }
       } catch (error) {
         console.error("Error loading results:", error);
         resultsContent.innerHTML =
           '<div class="alert alert-danger">Error loading results</div>';
-        resultsModal.show();
       }
     }
 
@@ -334,16 +409,44 @@
       }
     }
 
-    // Function to export results
+    // Helper to show/hide export wait modal
+    function showExportWaitModal() {
+      const modal = new bootstrap.Modal(
+        document.getElementById("exportWaitModal")
+      );
+      modal.show();
+      return modal;
+    }
+
+    // Helper to trigger download after modal is hidden
+    function triggerDownloadAfterModal(url) {
+      const modalEl = document.getElementById("exportWaitModal");
+      // If modal is visible, wait for it to hide before downloading
+      if (modalEl.classList.contains("show")) {
+        modalEl.addEventListener("hidden.bs.modal", function handler() {
+          modalEl.removeEventListener("hidden.bs.modal", handler);
+          triggerDownload(url);
+        });
+        const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+        if (exportWaitModal) exportWaitModal.hide();
+      } else {
+        triggerDownload(url);
+      }
+    }
+
     async function exportResults(fileId) {
       const button = document.querySelector(
         `.export-results[data-file-id="${fileId}"]`
       );
       const originalText = button.textContent;
+      let exportWaitModal = null;
       try {
         button.disabled = true;
         button.innerHTML =
           '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Exporting...';
+        // Show the waiting modal
+        exportWaitModal = showExportWaitModal();
+
         // Get the meet ID from the row
         const row = button.closest("tr");
         const meetId = row ? row.getAttribute("data-meet-id") : null;
@@ -351,11 +454,12 @@
           alert("Meet ID not found.");
           return;
         }
+        currentExportMeetId = meetId; // Track the current export
         // 1. Check if export zip exists
         let statusResp = await fetch(`/uploads/exports-status/${meetId}/`);
         let statusData = await statusResp.json();
         if (statusData.status === "ready") {
-          triggerDownload(statusData.download_url);
+          triggerDownloadAfterModal(statusData.download_url);
           return;
         }
         // 2. If not, trigger export
@@ -368,7 +472,7 @@
         });
         const data = await response.json();
         if (data.status === "ready") {
-          triggerDownload(data.download_url);
+          triggerDownloadAfterModal(data.download_url);
         } else if (data.status === "processing" && meetId) {
           await pollExportReady(meetId);
         } else {
@@ -377,10 +481,40 @@
       } catch (error) {
         console.error("Error exporting results:", error);
         alert("Error exporting results: " + error.message);
+        const modalEl = document.getElementById("exportWaitModal");
+        const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+        if (exportWaitModal) exportWaitModal.hide();
       } finally {
         button.disabled = false;
         button.textContent = originalText;
       }
+    }
+
+    // Poll until export is ready, with a longer timeout (e.g., 10 minutes)
+    async function pollExportReady(meetId) {
+      let tries = 0;
+      const maxTries = 300; // 300 * 2s = 600s = 10 minutes
+      while (tries < maxTries) {
+        if (exportCancelled) {
+          const modalEl = document.getElementById("exportWaitModal");
+          const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+          if (exportWaitModal) exportWaitModal.hide();
+          alert("Export cancelled.");
+          return;
+        }
+        let resp = await fetch(`/uploads/exports-status/${meetId}/`);
+        let data = await resp.json();
+        if (data.status === "ready") {
+          triggerDownloadAfterModal(data.download_url);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        tries++;
+      }
+      const modalEl = document.getElementById("exportWaitModal");
+      const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+      if (exportWaitModal) exportWaitModal.hide();
+      alert("Export is taking too long. Please try again later.");
     }
 
     // Helper to trigger download
@@ -391,23 +525,6 @@
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    }
-
-    // Poll until export is ready
-    async function pollExportReady(meetId) {
-      let tries = 0;
-      while (tries < 30) {
-        // up to 1 minute
-        let resp = await fetch(`/uploads/exports-status/${meetId}/`);
-        let data = await resp.json();
-        if (data.status === "ready") {
-          triggerDownload(data.download_url);
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-        tries++;
-      }
-      alert("Export is taking too long. Please try again later.");
     }
 
     // Add click handlers for view results buttons
@@ -455,6 +572,171 @@
         exportResults(this.dataset.fileId);
       });
     });
+
+    // Add click handler for cancel export button
+    document
+      .getElementById("cancelExportBtn")
+      .addEventListener("click", async function () {
+        exportCancelled = true;
+        if (currentExportMeetId) {
+          try {
+            await fetch(`/uploads/exports-cancel/${currentExportMeetId}/`, {
+              method: "POST",
+              headers: {
+                "X-CSRFToken": getCSRFToken(),
+                "Content-Type": "application/json",
+              },
+            });
+          } catch (e) {
+            // Optionally log error
+          }
+        }
+        const exportWaitModalEl = document.getElementById("exportWaitModal");
+        const exportWaitModal = bootstrap.Modal.getInstance(exportWaitModalEl);
+        if (exportWaitModal) exportWaitModal.hide();
+      });
+
+    // Combined Results Handlers
+    document
+      .getElementById("viewCombinedResultsBtn")
+      .addEventListener("click", async function () {
+        const resultsContent = document.getElementById(
+          "combinedResultsContent"
+        );
+        resultsContent.innerHTML =
+          '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+        combinedResultsModal.show();
+        try {
+          const response = await fetch("/uploads/combined-results/");
+          const data = await response.json();
+          if (response.ok) {
+            let html = "";
+            for (const [eventName, results] of Object.entries(data.results)) {
+              // Only show events with at least one result with points
+              const hasPoints = results.some((result) => {
+                return [
+                  result.prelim_points,
+                  result.swimoff_points,
+                  result.final_points,
+                  result.best_points,
+                ].some(
+                  (p) =>
+                    p !== null &&
+                    p !== undefined &&
+                    p !== "-" &&
+                    p !== 0 &&
+                    p !== "0.00"
+                );
+              });
+              if (!hasPoints) continue;
+              html += `<h4>${eventName}</h4>`;
+              html += '<table class="table table-sm">';
+              html +=
+                "<thead><tr><th>Meet</th><th>Swimmer</th><th>Age</th><th>Team</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
+              html += "<tbody>";
+              for (const result of results) {
+                html += `<tr>
+                  <td>${result.meet}</td>
+                  <td>${result.swimmer}</td>
+                  <td>${result.age}</td>
+                  <td>${result.team_code || "-"}</td>
+                  <td>${result.prelim_time || "-"}</td>
+                  <td>${result.prelim_points || "-"}</td>
+                  <td>${result.swimoff_time || "-"}</td>
+                  <td>${result.swimoff_points || "-"}</td>
+                  <td>${result.final_time || "-"}</td>
+                  <td>${result.final_points || "-"}</td>
+                  <td>${result.best_points || "-"}</td>
+              </tr>`;
+              }
+              html += "</tbody></table>";
+            }
+            if (!html) {
+              html =
+                '<div class="alert alert-info">No events with points to display.</div>';
+            }
+            resultsContent.innerHTML = html;
+          } else {
+            resultsContent.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+          }
+        } catch (error) {
+          console.error("Error loading combined results:", error);
+          resultsContent.innerHTML =
+            '<div class="alert alert-danger">Error loading combined results</div>';
+        }
+      });
+
+    document
+      .getElementById("exportCombinedResultsBtn")
+      .addEventListener("click", async function () {
+        const button = this;
+        const originalText = button.textContent;
+        let exportWaitModal = null;
+        try {
+          button.disabled = true;
+          button.innerHTML =
+            '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Exporting...';
+          exportWaitModal = showExportWaitModal();
+          // 1. Check if export zip exists
+          let statusResp = await fetch(`/uploads/exports-status/combined/`);
+          let statusData = await statusResp.json();
+          if (statusData.status === "ready") {
+            triggerDownloadAfterModal(statusData.download_url);
+            return;
+          }
+          // 2. If not, trigger export
+          const response = await fetch(`/uploads/export-combined-results/`, {
+            method: "POST",
+            headers: {
+              "X-CSRFToken": getCSRFToken(),
+              "Content-Type": "application/json",
+            },
+          });
+          const data = await response.json();
+          if (data.status === "ready") {
+            triggerDownloadAfterModal(data.download_url);
+          } else if (data.status === "processing") {
+            await pollExportReadyCombined();
+          } else {
+            throw new Error(data.error || "Export failed");
+          }
+        } catch (error) {
+          console.error("Error exporting combined results:", error);
+          alert("Error exporting combined results: " + error.message);
+          const modalEl = document.getElementById("exportWaitModal");
+          const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+          if (exportWaitModal) exportWaitModal.hide();
+        } finally {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      });
+
+    async function pollExportReadyCombined() {
+      let tries = 0;
+      const maxTries = 300; // 10 minutes
+      while (tries < maxTries) {
+        if (exportCancelled) {
+          const modalEl = document.getElementById("exportWaitModal");
+          const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+          if (exportWaitModal) exportWaitModal.hide();
+          alert("Export cancelled.");
+          return;
+        }
+        let resp = await fetch(`/uploads/exports-status/combined/`);
+        let data = await resp.json();
+        if (data.status === "ready") {
+          triggerDownloadAfterModal(data.download_url);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        tries++;
+      }
+      const modalEl = document.getElementById("exportWaitModal");
+      const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+      if (exportWaitModal) exportWaitModal.hide();
+      alert("Export is taking too long. Please try again later.");
+    }
 
     // Start checking processing status
     checkProcessingStatus();

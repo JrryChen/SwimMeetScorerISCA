@@ -1,4 +1,5 @@
 from typing import Any
+import warnings
 
 from hytek_parser._utils import extract, select_from_enum
 from hytek_parser.hy3.enums import DisqualificationCode
@@ -17,9 +18,11 @@ def h1_parser(
     dq_code = select_from_enum(DisqualificationCode, extract(line, 3, 2))
     dq_info = extract(line, 5, 124)  # Whitespace is stripped
 
-    assert (
-        entry.prelim_dq_info or entry.swimoff_dq_info or entry.finals_dq_info
-    ), "There must be a DQ for there to be an H1 line"
+    if not (entry.prelim_dq_info or entry.swimoff_dq_info or entry.finals_dq_info):
+        warnings.warn(
+            f"H1 line encountered without a DQ for entry. Skipping line: {line}"
+        )
+        return file  # Skip processing this line
 
     if entry.finals_dq_info:
         # DQ happened in prelims

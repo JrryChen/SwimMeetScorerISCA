@@ -54,3 +54,7 @@ celerybeat.pid
 # Test files
 SampleMeetResults/
 hytek-test-files/
+
+# Cursor
+.cursorrules
+.cursor/
