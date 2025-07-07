@@ -34,6 +34,7 @@ staticfiles/
 .venv
 venv/
 ENV/
+*.pem
 
 # IDE
 .idea/
@@ -50,6 +51,9 @@ ENV/
 # Celery
 celerybeat-schedule
 celerybeat.pid
+
+#SSH
+.ssh/
 
 # Test files
 SampleMeetResults/

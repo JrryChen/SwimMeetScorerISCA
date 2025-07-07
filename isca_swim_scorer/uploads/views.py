@@ -5,12 +5,15 @@ from django.urls import reverse_lazy
 from django.http import JsonResponse, FileResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.cache import cache_page
+from django.core.cache import cache
 from datetime import datetime, date
 from django.utils.text import slugify
 from django.db.models import F
 import zipfile
 import os
 import tempfile
+import logging
 from django.conf import settings
 
 from .models import UploadedFile
@@ -20,6 +23,58 @@ from meets.models import Meet
 from scoring.scoring_system import ScoringSystem
 from core.utils import format_swim_time
 from core.models import Gender, Stroke, Course
+
+logger = logging.getLogger(__name__)
+
+# Helper Functions for Export Operations
+def get_export_zip_path(meet_id):
+    """Generate export zip file path for a specific meet"""
+    export_dir = os.path.join(settings.MEDIA_ROOT, 'exports')
+    zip_filename = f"meet_{meet_id}_results.zip"
+    return os.path.join(export_dir, zip_filename)
+
+def get_combined_export_zip_path():
+    """Generate export zip file path for combined results"""
+    export_dir = os.path.join(settings.MEDIA_ROOT, 'exports')
+    zip_filename = "combined_results.zip"
+    return os.path.join(export_dir, zip_filename)
+
+def ensure_export_directory():
+    """Ensure the export directory exists"""
+    export_dir = os.path.join(settings.MEDIA_ROOT, 'exports')
+    os.makedirs(export_dir, exist_ok=True)
+    return export_dir
+
+def create_file_response(file_path, filename):
+    """Create a file response for download with proper error handling"""
+    if not os.path.exists(file_path):
+        return JsonResponse({'status': 'error', 'error': 'Export file not found'}, status=404)
+    
+    try:
+        response = FileResponse(open(file_path, 'rb'), as_attachment=True)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+    except (OSError, IOError) as e:
+        logger.error(f"Error serving file {file_path}: {str(e)}")
+        return JsonResponse({'status': 'error', 'error': 'Error serving file'}, status=500)
+
+def rate_limit_check(request, action, limit=10, window=3600):
+    """
+    Simple rate limiting check
+    Returns True if rate limit is exceeded
+    """
+    if not hasattr(request, 'META'):
+        return False
+        
+    client_ip = request.META.get('REMOTE_ADDR', 'unknown')
+    cache_key = f"rate_limit_{action}_{client_ip}"
+    
+    current_count = cache.get(cache_key, 0)
+    if current_count >= limit:
+        return True
+    
+    cache.set(cache_key, current_count + 1, window)
+    return False
 
 class UploadedFileListView(ListView):
     model = UploadedFile
@@ -51,7 +106,13 @@ class UploadedFileCreateView(CreateView):
         """Extract HY3 file from ZIP archive and return its path."""
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             # Find all .hy3 files in the zip
-            hy3_files = [f for f in zip_ref.namelist() if f.lower().endswith('.hy3')]
+            hy3_files = []
+            for filename in zip_ref.namelist():
+                # Security: Validate file path to prevent zip slip attacks
+                if os.path.isabs(filename) or ".." in filename:
+                    raise ValueError(f"Unsafe file path detected: {filename}")
+                if filename.lower().endswith('.hy3') and not filename.startswith('/'):
+                    hy3_files.append(filename)
             
             if not hy3_files:
                 raise ValueError("No HY3 files found in the ZIP archive")
@@ -61,12 +122,20 @@ class UploadedFileCreateView(CreateView):
             
             # Create a temporary directory
             with tempfile.TemporaryDirectory() as temp_dir:
-                # Extract the HY3 file
+                # Extract the HY3 file safely
                 hy3_filename = hy3_files[0]
-                zip_ref.extract(hy3_filename, temp_dir)
-                return os.path.join(temp_dir, hy3_filename)
+                # Additional safety check for the extracted path
+                extracted_path = zip_ref.extract(hy3_filename, temp_dir)
+                if not extracted_path.startswith(temp_dir):
+                    raise ValueError("Unsafe extraction path detected")
+                return extracted_path
 
     def form_valid(self, form):
+        # Rate limiting check for file uploads
+        if rate_limit_check(self.request, 'file_upload', limit=5, window=3600):
+            messages.error(self.request, 'Upload rate limit exceeded. Please try again later.')
+            return self.form_invalid(form)
+            
         # Set the original filename before saving
         form.instance.original_filename = form.instance.file.name
         response = super().form_valid(form)
@@ -110,10 +179,17 @@ class UploadedFileCreateView(CreateView):
                 
                 messages.success(self.request, 'File uploaded successfully! Processing will begin shortly.')
             
-        except Exception as e:
+        except (ValueError, zipfile.BadZipFile, OSError, IOError) as e:
+            # Handle specific file processing errors
             form.instance.processing_errors = str(e)
             form.instance.save()
             messages.error(self.request, f'Error processing file: {str(e)}')
+        except Exception as e:
+            # Log unexpected errors for debugging
+            logger.error(f"Unexpected error processing file {form.instance.id}: {str(e)}")
+            form.instance.processing_errors = "An unexpected error occurred during file processing"
+            form.instance.save()
+            messages.error(self.request, 'An unexpected error occurred. Please try again or contact support.')
         
         return response
 
@@ -155,12 +231,15 @@ def get_file_results(request, pk):
                 'error': 'File type not supported for results'
             }, status=400)
             
-        # Get results from the database
+        # Get results from the database with optimized queries
         meet = uploaded_file.meet
         results = {}
         # scoring = ScoringSystem()
         
-        for event in meet.events.all():
+        # Optimize queries with select_related and prefetch_related
+        for event in meet.events.select_related('meet').prefetch_related(
+            'results__swimmer__team'
+        ).all():
             event_results = []
             results_list = []
             
@@ -224,9 +303,15 @@ def get_file_results(request, pk):
         return JsonResponse({
             'error': 'File not found'
         }, status=404)
-    except Exception as e:
+    except (OSError, IOError) as e:
+        logger.error(f"File system error in get_file_results: {str(e)}")
         return JsonResponse({
-            'error': str(e)
+            'error': 'File system error occurred'
+        }, status=500)
+    except Exception as e:
+        logger.error(f"Unexpected error in get_file_results: {str(e)}")
+        return JsonResponse({
+            'error': 'An unexpected error occurred'
         }, status=500)
 
 @require_http_methods(["GET"])
@@ -304,6 +389,13 @@ def delete_file(request, pk):
 @require_http_methods(["POST"])
 def delete_all_files(request):
     """API endpoint to delete all files"""
+    # Rate limiting for destructive operations
+    if rate_limit_check(request, 'delete_all', limit=2, window=3600):
+        return JsonResponse({
+            'status': 'error',
+            'error': 'Delete operation rate limit exceeded. Please try again later.'
+        }, status=429)
+        
     try:
         # Get all files
         files = UploadedFile.objects.all()
@@ -333,10 +425,7 @@ def delete_all_files(request):
             'error': str(e)
         }, status=500)
 
-def get_export_zip_path(meet_id):
-    export_dir = os.path.join(settings.MEDIA_ROOT, 'exports')
-    zip_filename = f"meet_{meet_id}_results.zip"
-    return os.path.join(export_dir, zip_filename)
+
 
 @require_http_methods(["POST"])
 def export_results(request, file_id):
@@ -368,16 +457,12 @@ def get_export_status(request, meet_id):
 def download_export_zip(request, meet_id):
     """Download the exported zip file for a meet"""
     zip_path = get_export_zip_path(meet_id)
-    if not os.path.exists(zip_path):
-        return JsonResponse({'status': 'error', 'error': 'Export file not found'}, status=404)
     
     # Get the meet name for the zip file
     meet = get_object_or_404(Meet, id=meet_id)
     zip_filename = f"{meet.name}_results.zip"
     
-    response = FileResponse(open(zip_path, 'rb'), as_attachment=True)
-    response['Content-Disposition'] = f'attachment; filename="{zip_filename}"'
-    return response
+    return create_file_response(zip_path, zip_filename)
 
 @require_http_methods(["GET"])
 def get_task_status(request, task_id):
@@ -410,10 +495,7 @@ def get_task_status(request, task_id):
         }, status=500)
 
 # --- Combined Results Views ---
-def get_combined_export_zip_path():
-    export_dir = os.path.join(settings.MEDIA_ROOT, 'exports')
-    zip_filename = "combined_results.zip"
-    return os.path.join(export_dir, zip_filename)
+
 
 @require_http_methods(["GET"])
 def get_combined_results(request):
@@ -450,7 +532,10 @@ def get_combined_results(request):
     # Gather all results and group by (event type, reporting age band)
     grouped_results = defaultdict(list)
     event_type_names = {}
-    for event in Event.objects.all():
+    # Optimize queries with select_related and prefetch_related
+    for event in Event.objects.select_related('meet').prefetch_related(
+        'results__swimmer__team'
+    ).all():
         type_key = event_type_key(event)
         if type_key not in event_type_names:
             event_type_names[type_key] = event_type_display(event)
@@ -511,9 +596,5 @@ def get_combined_export_status(request):
 @require_http_methods(["GET"])
 def download_combined_export_zip(request):
     zip_path = get_combined_export_zip_path()
-    if not os.path.exists(zip_path):
-        return JsonResponse({'status': 'error', 'error': 'Export file not found'}, status=404)
     zip_filename = "combined_results.zip"
-    response = FileResponse(open(zip_path, 'rb'), as_attachment=True)
-    response['Content-Disposition'] = f'attachment; filename="{zip_filename}"'
-    return response
+    return create_file_response(zip_path, zip_filename)

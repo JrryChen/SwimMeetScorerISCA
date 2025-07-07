@@ -68,18 +68,27 @@ def process_hytek_file_task(self, file_id: int, meet_id: Optional[int] = None) -
                 logger.info(f"Processing ZIP file: {uploaded_file.original_filename}")
                 try:
                     with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                        # Find all HY3 files in the ZIP
-                        hy3_files = [f for f in zip_ref.namelist() if f.lower().endswith('.hy3')]
+                        # Find all HY3 files in the ZIP with security validation
+                        hy3_files = []
+                        for filename in zip_ref.namelist():
+                            # Security: Validate file path to prevent zip slip attacks
+                            if os.path.isabs(filename) or ".." in filename:
+                                raise ValueError(f"Unsafe file path detected: {filename}")
+                            if filename.lower().endswith('.hy3') and not filename.startswith('/'):
+                                hy3_files.append(filename)
                         
                         if not hy3_files:
                             raise ValueError("No HY3 files found in the ZIP archive")
                         if len(hy3_files) > 1:
                             raise ValueError("ZIP archive contains multiple HY3 files. Please include only one HY3 file.")
                         
-                        # Extract the HY3 file to a temporary directory
+                        # Extract the HY3 file to a temporary directory safely
                         temp_dir = tempfile.mkdtemp()
-                        zip_ref.extract(hy3_files[0], temp_dir)
-                        file_path = os.path.join(temp_dir, hy3_files[0])
+                        extracted_path = zip_ref.extract(hy3_files[0], temp_dir)
+                        # Additional safety check for the extracted path
+                        if not extracted_path.startswith(temp_dir):
+                            raise ValueError("Unsafe extraction path detected")
+                        file_path = extracted_path
                         logger.info(f"Extracted HY3 file to: {file_path}")
                 except zipfile.BadZipFile:
                     raise ValueError("Invalid ZIP file format")
@@ -89,9 +98,15 @@ def process_hytek_file_task(self, file_id: int, meet_id: Optional[int] = None) -
             results = process_hytek_file(file_path, meet)
             
             # Clean up temporary directory if it was created
-            if uploaded_file.file_type == 'ZIP' and os.path.exists(os.path.dirname(file_path)):
+            if uploaded_file.file_type == 'ZIP' and 'temp' in file_path:
                 import shutil
-                shutil.rmtree(os.path.dirname(file_path))
+                try:
+                    temp_dir = os.path.dirname(file_path)
+                    if os.path.exists(temp_dir) and temp_dir != '/' and 'temp' in temp_dir:
+                        shutil.rmtree(temp_dir)
+                        logger.info(f"Cleaned up temporary directory: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temporary directory: {str(e)}")
                 
         except Exception as e:
             logger.error(f"Error processing file {file_id}: {str(e)}")
@@ -157,7 +172,10 @@ def export_meet_results_task(self, meet_id: int) -> Dict[str, Any]:
                 writer = csv.writer(f)
                 writer.writerow(['Event', 'Swimmer', 'Age', 'Team', 'Prelim Time', 'Prelim Points',
                                  'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
-                for event in meet.events.all().order_by('event_number'):
+                # Optimize queries with select_related and prefetch_related
+                for event in meet.events.select_related('meet').prefetch_related(
+                    'results__swimmer__team'
+                ).order_by('event_number'):
                     for result in event.results.all().order_by('final_place', 'prelim_place', 'swim_off_place'):
                         writer.writerow([
                             event.name,
@@ -178,7 +196,10 @@ def export_meet_results_task(self, meet_id: int) -> Dict[str, Any]:
                 writer = csv.writer(f)
                 writer.writerow(['Swimmer', 'Age', 'Team', 'Event', 'Prelim Time', 'Prelim Points',
                                  'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
-                for swimmer in meet.swimmers.all().order_by('last_name', 'first_name'):
+                # Optimize queries with select_related and prefetch_related
+                for swimmer in meet.swimmers.select_related('team').prefetch_related(
+                    'results__event'
+                ).order_by('last_name', 'first_name'):
                     for result in swimmer.results.all().order_by('event__event_number'):
                         writer.writerow([
                             swimmer.full_name,
@@ -228,7 +249,10 @@ def export_combined_results_task(self) -> Dict[str, Any]:
                 writer = csv.writer(f)
                 writer.writerow(['Meet', 'Event', 'Swimmer', 'Age', 'Team', 'Prelim Time', 'Prelim Points',
                                  'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
-                for event in Event.objects.all().order_by('meet__start_date', 'meet__name', 'event_number'):
+                # Optimize queries with select_related and prefetch_related
+                for event in Event.objects.select_related('meet').prefetch_related(
+                    'results__swimmer__team'
+                ).order_by('meet__start_date', 'meet__name', 'event_number'):
                     for result in event.results.all().order_by('final_place', 'prelim_place', 'swim_off_place'):
                         writer.writerow([
                             event.meet.name,
@@ -250,7 +274,10 @@ def export_combined_results_task(self) -> Dict[str, Any]:
                 writer = csv.writer(f)
                 writer.writerow(['Meet', 'Swimmer', 'Age', 'Team', 'Event', 'Prelim Time', 'Prelim Points',
                                  'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
-                for swimmer in Swimmer.objects.all().order_by('last_name', 'first_name'):
+                # Optimize queries with select_related and prefetch_related
+                for swimmer in Swimmer.objects.select_related('team').prefetch_related(
+                    'results__event__meet'
+                ).order_by('last_name', 'first_name'):
                     for result in swimmer.results.all().order_by('event__meet__start_date', 'event__event_number'):
                         writer.writerow([
                             result.event.meet.name,

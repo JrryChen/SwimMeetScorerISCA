@@ -2,9 +2,10 @@ version: "3.8"
 
 services:
   redis-app-isca:
-    image: redis
+    image: redis:latest
 
   django-app-isca:
+    image: jrrychen/isca-django
     container_name: django-app-isca
     build:
       context: ./isca_swim_scorer
@@ -21,6 +22,7 @@ services:
       - redis-app-isca
 
   celery-app-isca:
+    image: jrrychen/isca-celery
     container_name: celery-app-isca
     build:
       context: ./isca_swim_scorer
