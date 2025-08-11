@@ -2,6 +2,7 @@ from django import forms
 from uploads.models import UploadedFile
 import os
 import zipfile
+from django.core.exceptions import ValidationError
 
 class UploadFileForm(forms.ModelForm):
     """
@@ -82,6 +83,12 @@ class UploadFileForm(forms.ModelForm):
                 raise forms.ValidationError('Error validating HY3 file format')
         
         return file
-    
-    
+
+
+class UserMultipleFileUploadForm(forms.Form):
+    """
+    Form for users to upload multiple files without needing to specify types
+    Note: The actual file input will be handled in the HTML template
+    """
+    pass  # We don't need any fields here since we'll handle files manually
         

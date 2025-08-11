@@ -32,4 +32,5 @@ class Stroke(models.TextChoices):
     IM = 'IM', _('Individual Medley')
     MEDLEY_RELAY = 'MR', _('Medley Relay')
     FREESTYLE_RELAY = 'FRR', _('Freestyle Relay')
+    OTHER = 'OTH', _('Other/Dryland')
     

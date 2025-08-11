@@ -1,0 +1,472 @@
+{% extends "base.html" %}
+{% block title %}Upload Status - ISCA Swim Scorer{% endblock %}
+
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+<style>
+.status-card {
+    transition: all 0.3s ease;
+}
+
+.status-processing {
+    border-left: 5px solid #ffc107;
+    background-color: #fff9e6;
+}
+
+.status-completed {
+    border-left: 5px solid #28a745;
+    background-color: #f0fff4;
+}
+
+.status-pending {
+    border-left: 5px solid #6c757d;
+    background-color: #f8f9fa;
+}
+
+.processing-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.pulse {
+    animation: pulse 1.5s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+    from { opacity: 1; }
+    to { opacity: 0.5; }
+}
+
+.progress-wrapper {
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+}
+
+.file-icon {
+    font-size: 1.5em;
+    margin-right: 15px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4" data-processing-complete="{% if processing_complete %}true{% else %}false{% endif %}">
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            
+            <!-- Header -->
+            <div class="card shadow mb-4">
+                <div class="card-header bg-info text-white">
+                    <h2 class="mb-0"><i class="bi bi-clock-history"></i> Upload Status</h2>
+                    <p class="mb-0 mt-2">Track your file processing progress</p>
+                </div>
+            </div>
+
+            <!-- Status Overview -->
+            {% if not processing_complete %}
+            <div class="progress-wrapper">
+                <div class="text-center mb-3">
+                    <div class="processing-indicator">
+                        <div class="spinner-border text-primary pulse" role="status"></div>
+                        <h5 class="mb-0">Processing your files...</h5>
+                    </div>
+                    <p class="text-muted mt-2">This may take several minutes. Please don't close this page.</p>
+                </div>
+                <div class="progress mb-3" style="height: 8px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" 
+                         role="progressbar" style="width: 50%"></div>
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-success text-center">
+                <i class="bi bi-check-circle fs-1"></i>
+                <h4 class="mt-2">Processing Complete!</h4>
+                <p>All files have been processed successfully. You can now download your results.</p>
+            </div>
+            {% endif %}
+
+            <!-- Files List -->
+            <div class="row">
+                {% for file in files %}
+                <div class="col-md-6 mb-4">
+                    <div class="card status-card 
+                        {% if file.is_processed %}status-completed
+                        {% elif file.celery_task_id %}status-processing  
+                        {% else %}status-pending{% endif %}"
+                        data-file-id="{{ file.id }}"
+                        data-file-status="{% if file.is_processed %}completed{% elif file.celery_task_id %}processing{% else %}pending{% endif %}">
+                        
+                        <div class="card-body">
+                            <div class="d-flex align-items-center mb-3">
+                                <!-- File Icon -->
+                                <div class="file-icon">
+                                    {% if file.file_type == 'HY3' %}
+                                        <i class="bi bi-file-text text-primary"></i>
+                                    {% elif file.file_type == 'ZIP' %}
+                                        <i class="bi bi-file-zip text-warning"></i>
+                                    {% elif file.file_type == 'XLSX' %}
+                                        <i class="bi bi-file-earmark-excel text-success"></i>
+                                    {% else %}
+                                        <i class="bi bi-file text-secondary"></i>
+                                    {% endif %}
+                                </div>
+                                
+                                <!-- File Info -->
+                                <div class="flex-grow-1">
+                                    <h6 class="mb-1">{{ file.original_filename }}</h6>
+                                    <small class="text-muted">{{ file.get_file_type_display }}</small>
+                                </div>
+                            </div>
+
+                            <!-- Status Badge -->
+                            <div class="mb-3">
+                                {% if file.is_processed %}
+                                    <span class="badge bg-success fs-6">
+                                        <i class="bi bi-check-circle"></i> Completed
+                                    </span>
+                                {% elif file.celery_task_id %}
+                                    <span class="badge bg-warning fs-6">
+                                        <i class="bi bi-hourglass-split pulse"></i> Processing...
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-secondary fs-6">
+                                        <i class="bi bi-clock"></i> Pending
+                                    </span>
+                                {% endif %}
+                            </div>
+
+                            <!-- Actions -->
+                            <div class="d-grid gap-2">
+                                {% if file.is_processed and file.meet %}
+                                    <button class="btn btn-info view-results-btn mb-2" data-file-id="{{ file.id }}" data-meet-name="{{ file.meet.name }}">
+                                        <i class="bi bi-eye"></i> View Results
+                                    </button>
+                                    <a href="{% url 'uploads:user-download-results' file.id }}" 
+                                       class="btn btn-success">
+                                        <i class="bi bi-file-zip"></i> Download Results (ZIP)
+                                    </a>
+                                {% elif file.file_type == 'XLSX' %}
+                                    <button class="btn btn-outline-info" disabled>
+                                        <i class="bi bi-info-circle"></i> XLSX files don't generate CSV results
+                                    </button>
+                                {% else %}
+                                    <button class="btn btn-outline-secondary" disabled>
+                                        <i class="bi bi-hourglass-split"></i> Processing...
+                                    </button>
+                                {% endif %}
+                            </div>
+
+                            <!-- Processing Info -->
+                            {% if file.celery_task_id and not file.is_processed %}
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    <i class="bi bi-info-circle"></i> 
+                                    File is being analyzed and scored. This typically takes 1-3 minutes.
+                                </small>
+                            </div>
+                            {% endif %}
+
+                            {% if file.processing_errors %}
+                            <div class="alert alert-danger mt-2 mb-0">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                <strong>Processing Error:</strong><br>
+                                {{ file.processing_errors }}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="text-center mt-4 mb-4">
+                <a href="{% url 'uploads:user-upload' %}" class="btn btn-primary btn-lg">
+                    <i class="bi bi-plus-circle"></i> Upload More Files
+                </a>
+                
+                {% if processing_complete %}
+                <button id="downloadAllBtn" class="btn btn-success btn-lg ms-2">
+                    <i class="bi bi-file-zip"></i> Download All Results (ZIP)
+                </button>
+                {% endif %}
+            </div>
+
+            <!-- Help Info -->
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h6><i class="bi bi-info-circle"></i> About Your Results</h6>
+                    <p><strong>View Results:</strong> Shows scored results only - swimmers with calculated points based on their times.</p>
+                    <p>Each ZIP download contains <strong>two CSV files</strong>:</p>
+                    <ul class="mb-3">
+                        <li><strong>results_by_event.csv</strong> - Scored swimmers organized by events (fastest first)</li>
+                        <li><strong>results_by_swimmer.csv</strong> - Scored events organized by swimmers (alphabetically)</li>
+                    </ul>
+                    <p class="mb-0">
+                        <strong>Note:</strong> Only results with calculated points are included. Unscored times (DQ, NS, etc.) are excluded.
+                    </p>
+                    <p class="mb-0">
+                        <strong>Need Help?</strong> If processing takes longer than expected or you encounter errors, 
+                        please check your file format and try again. 
+                        Supported formats: HY3 (HyTek exports), ZIP (containing HY3), XLSX (dryland events).
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- View Results Modal -->
+<div class="modal fade" id="viewResultsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="resultsModalTitle">Meet Results</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <div id="viewResultsContent">
+                    <div class="text-center">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading results...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize modal
+    const viewResultsModal = new bootstrap.Modal(document.getElementById('viewResultsModal'));
+    
+    // Auto-refresh if processing is not complete
+    const container = document.querySelector('.container');
+    const processingComplete = container.getAttribute('data-processing-complete') === 'true';
+    
+    if (!processingComplete) {
+        // Get all file IDs that are currently processing
+        const processingFileIds = [];
+        document.querySelectorAll('.card[data-file-status="processing"]').forEach(card => {
+            const fileId = card.dataset.fileId;
+            if (fileId) {
+                processingFileIds.push(fileId);
+            }
+        });
+
+        console.log('Monitoring processing files:', processingFileIds);
+
+        const refreshInterval = setInterval(async function() {
+            let anyCompleted = false;
+            
+            // Check each processing file
+            for (const fileId of processingFileIds) {
+                try {
+                    const response = await fetch(`/uploads/file-status/${fileId}/`);
+                    const data = await response.json();
+                    
+                    if (data.status === 'completed') {
+                        console.log(`File ${fileId} completed processing!`);
+                        anyCompleted = true;
+                        break;
+                    }
+                } catch (error) {
+                    console.error(`Error checking status for file ${fileId}:`, error);
+                }
+            }
+            
+            // If any file completed, reload the page
+            if (anyCompleted) {
+                console.log('Reloading page due to completed processing...');
+                clearInterval(refreshInterval);
+                window.location.reload();
+            }
+        }, 3000); // Check every 3 seconds for faster response
+        
+        // Also set a fallback full page reload every 30 seconds as a safety net
+        setTimeout(function() {
+            if (!document.hidden) { // Only reload if page is visible
+                console.log('Fallback reload after 30 seconds...');
+                window.location.reload();
+            }
+        }, 30000);
+    }
+
+    // Download all functionality
+    if (processingComplete) {
+        const downloadAllBtn = document.getElementById('downloadAllBtn');
+        if (downloadAllBtn) {
+            downloadAllBtn.addEventListener('click', function() {
+                const downloadLinks = document.querySelectorAll('a[href*="download"]');
+                downloadLinks.forEach(function(link, index) {
+                    setTimeout(function() {
+                        link.click();
+                    }, index * 1000); // Stagger downloads by 1 second
+                });
+            });
+        }
+    }
+
+    // View Results functionality
+    document.querySelectorAll('.view-results-btn').forEach(button => {
+        button.addEventListener('click', async function() {
+            const fileId = this.dataset.fileId;
+            const meetName = this.dataset.meetName;
+            
+            // Update modal title
+            document.getElementById('resultsModalTitle').textContent = meetName + ' - Scored Results';
+            
+            // Show loading state
+            document.getElementById('viewResultsContent').innerHTML = `
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading results...</p>
+                </div>
+            `;
+            
+            // Show modal
+            viewResultsModal.show();
+            
+            try {
+                // Fetch results
+                const response = await fetch(`/uploads/view-results/${fileId}/`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let html = '';
+                    
+                    // Check if we have results
+                    const hasResults = Object.keys(data.results).length > 0;
+                    
+                    if (!hasResults) {
+                        html = `
+                            <div class="alert alert-info text-center">
+                                <i class="bi bi-info-circle fs-1"></i>
+                                <h4 class="mt-3">No Scored Results Found</h4>
+                                <p>This meet doesn't have any individual event results with calculated points.<br>
+                                Only times with points are displayed (excludes DQ, NS, and unscored results).</p>
+                            </div>
+                        `;
+                    } else {
+                        // Display results by event
+                        for (const [eventName, results] of Object.entries(data.results)) {
+                            // Skip events with no results
+                            if (!results || results.length === 0) continue;
+                            
+                            html += `
+                                <div class="mb-4">
+                                    <h4 class="text-primary border-bottom pb-2">${eventName}</h4>
+                                    <div class="table-responsive">
+                                        <table class="table table-hover table-sm">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Place</th>
+                                                    <th>Swimmer</th>
+                                                    <th>Age</th>
+                                                    <th>Team</th>
+                                                    <th>Prelim Time</th>
+                                                    <th>Prelim Pts</th>
+                                                    <th>Swimoff Time</th>
+                                                    <th>Swimoff Pts</th>
+                                                    <th>Final Time</th>
+                                                    <th>Final Pts</th>
+                                                    <th>Best Pts</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                            `;
+                            
+                            results.forEach((result, index) => {
+                                html += `
+                                    <tr>
+                                        <td><strong>${index + 1}</strong></td>
+                                        <td><strong>${result.swimmer}</strong></td>
+                                        <td>${result.age}</td>
+                                        <td>${result.team_code || '-'}</td>
+                                        <td>${result.prelim_time}</td>
+                                        <td>${result.prelim_points}</td>
+                                        <td>${result.swimoff_time}</td>
+                                        <td>${result.swimoff_points}</td>
+                                        <td class="fw-bold text-primary">${result.final_time}</td>
+                                        <td>${result.final_points}</td>
+                                        <td class="fw-bold">${result.best_points}</td>
+                                    </tr>
+                                `;
+                            });
+                            
+                            html += `
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    }
+                    
+                    document.getElementById('viewResultsContent').innerHTML = html;
+                    
+                } else {
+                    document.getElementById('viewResultsContent').innerHTML = `
+                        <div class="alert alert-danger text-center">
+                            <i class="bi bi-exclamation-triangle fs-1"></i>
+                            <h4 class="mt-3">Error Loading Results</h4>
+                            <p>${data.error || 'Unable to load results at this time.'}</p>
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                console.error('Error fetching results:', error);
+                document.getElementById('viewResultsContent').innerHTML = `
+                    <div class="alert alert-danger text-center">
+                        <i class="bi bi-exclamation-triangle fs-1"></i>
+                        <h4 class="mt-3">Connection Error</h4>
+                        <p>Unable to load results. Please check your connection and try again.</p>
+                    </div>
+                `;
+            }
+        });
+    });
+
+    // Clear localStorage when processing is complete and results are available
+    if (processingComplete) {
+        // Clear the upload state since the user has successfully completed the upload process
+        try {
+            localStorage.removeItem('isca_upload_state');
+            localStorage.removeItem('isca_uploaded_files');
+            console.log('Cleared previous upload state - session completed successfully');
+        } catch (e) {
+            console.log('Could not clear localStorage:', e);
+        }
+    }
+
+    // Add a button to manually clear previous sessions (for edge cases)
+    const clearSessionBtn = document.getElementById('clearSessionBtn');
+    if (clearSessionBtn) {
+        clearSessionBtn.addEventListener('click', function() {
+            try {
+                localStorage.removeItem('isca_upload_state');
+                localStorage.removeItem('isca_uploaded_files');
+                alert('Previous session data cleared successfully!');
+            } catch (e) {
+                alert('Could not clear session data.');
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

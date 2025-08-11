@@ -1,0 +1,471 @@
+{% extends "base.html" %}
+{% block title %}Upload Swimming Meet Files - ISCA Meet Scorer{% endblock %}
+
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+<style>
+.upload-zone {
+    border: 2px dashed #ccc;
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    margin: 20px 0;
+    background-color: #f8f9fa;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.upload-zone:hover {
+    border-color: #007bff;
+    background-color: #e3f2fd;
+}
+
+.upload-zone.dragover {
+    border-color: #007bff;
+    background-color: #e3f2fd;
+    transform: scale(1.02);
+}
+
+.file-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.file-item {
+    padding: 10px;
+    margin: 5px 0;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.file-item .file-info {
+    display: flex;
+    align-items: center;
+}
+
+.file-item .file-icon {
+    margin-right: 10px;
+    font-size: 1.2em;
+}
+
+.file-size {
+    color: #666;
+    font-size: 0.9em;
+    margin-left: 10px;
+}
+
+.supported-formats {
+    background-color: #e8f4f8;
+    border: 1px solid #b8daff;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 20px 0;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card card-isca shadow-lg">
+                <div class="card-header card-header-isca">
+                    <h2 class="mb-0"><i class="bi bi-cloud-upload"></i> Upload Swimming Meet Files</h2>
+                    <p class="mb-0 mt-2">Upload your HY3, ZIP, or Excel files to get professionally scored results</p>
+                </div>
+                <div class="card-body">
+                    
+                    <!-- Supported Formats Info -->
+                    <div class="supported-formats">
+                        <h6><i class="bi bi-info-circle"></i> Supported File Types:</h6>
+                        <ul class="mb-0">
+                            <li><strong>HY3 files</strong> - HyTek Meet Manager exports (.hy3)</li>
+                            <li><strong>ZIP files</strong> - Compressed folders containing HY3 files (.zip)</li>
+                            <li><strong>Excel files</strong> - Dryland events templates (.xlsx)</li>
+                        </ul>
+                        <small class="text-muted">Maximum file size: 10MB per file | Maximum 10 files at once</small>
+                    </div>
+
+                    <!-- Upload Form -->
+                    <form method="post" enctype="multipart/form-data" id="uploadForm">
+                        {% csrf_token %}
+                        
+                        <!-- Upload Zone -->
+                        <div class="upload-zone" id="uploadZone">
+                            <i class="bi bi-cloud-arrow-up" style="font-size: 3rem; color: #007bff;"></i>
+                            <h5 class="mt-3">Drag & Drop Files Here</h5>
+                            <p class="text-muted">or click to browse files</p>
+                            <!-- Plain HTML input for multiple files -->
+                            <input type="file" name="files" id="fileInput" multiple class="d-none" 
+                                   accept=".hy3,.zip,.xlsx">
+                        </div>
+
+                        <!-- File List -->
+                        <div id="fileList" class="file-list" style="display: none;">
+                            <h6>Selected Files:</h6>
+                            <div id="selectedFiles"></div>
+                        </div>
+
+                        <!-- Messages -->
+                        {% if messages %}
+                        <div class="mt-3">
+                            {% for message in messages %}
+                            <div class="alert alert-{% if message.tags %}{{ message.tags }}{% else %}info{% endif %}">
+                                {{ message }}
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Submit Button -->
+                        <div class="text-center mt-4">
+                            <button type="submit" class="btn btn-isca-primary btn-lg" id="submitBtn" disabled>
+                                <i class="bi bi-upload"></i> Upload & Process Files
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-lg ms-2" id="clearBtn" disabled>
+                                <i class="bi bi-x-circle"></i> Clear All
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Quick Actions -->
+                    <hr class="my-4">
+                    <div class="row text-center">
+                        <div class="col-md-4">
+                            <a href="{% url 'uploads:download-dryland-template' %}" class="btn btn-outline-info">
+                                <i class="bi bi-file-earmark-excel"></i><br>
+                                Download Dryland Template
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <button class="btn btn-outline-secondary" disabled>
+                                <i class="bi bi-question-circle"></i><br>
+                                Help & Documentation
+                            </button>
+                        </div>
+                        <div class="col-md-4">
+                            <a href="{% url 'uploads:upload-list' %}" class="btn btn-outline-warning">
+                                <i class="bi bi-gear"></i><br>
+                                Admin Panel
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const selectedFiles = document.getElementById('selectedFiles');
+    const submitBtn = document.getElementById('submitBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const uploadForm = document.getElementById('uploadForm');
+    
+    let files = [];
+
+    // Persistence functions
+    function saveUploadState() {
+        const uploadState = {
+            timestamp: Date.now(),
+            uploadedFiles: JSON.parse(localStorage.getItem('isca_uploaded_files') || '[]')
+        };
+        localStorage.setItem('isca_upload_state', JSON.stringify(uploadState));
+    }
+
+    function loadUploadState() {
+        try {
+            console.log('Checking localStorage for upload state...');
+            const uploadState = JSON.parse(localStorage.getItem('isca_upload_state'));
+            console.log('Upload state found:', uploadState);
+            
+            if (uploadState && uploadState.uploadedFiles) {
+                // Check if the state is less than 24 hours old
+                const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+                const timeElapsed = Date.now() - uploadState.timestamp;
+                console.log(`Time elapsed: ${timeElapsed / 1000 / 60} minutes`);
+                
+                if (timeElapsed < maxAge) {
+                    console.log('Returning previous upload files:', uploadState.uploadedFiles);
+                    return uploadState.uploadedFiles;
+                } else {
+                    console.log('Upload state too old, clearing...');
+                    clearUploadState();
+                }
+            }
+        } catch (e) {
+            console.log('No previous upload state found:', e);
+        }
+        return [];
+    }
+
+    function saveUploadedFiles(uploadedFiles) {
+        console.log('Saving files to localStorage:', uploadedFiles);
+        localStorage.setItem('isca_uploaded_files', JSON.stringify(uploadedFiles));
+        console.log('Files saved, now saving state...');
+        saveUploadState();
+        console.log('Upload state saved successfully');
+    }
+
+    function clearUploadState() {
+        localStorage.removeItem('isca_upload_state');
+        localStorage.removeItem('isca_uploaded_files');
+    }
+
+    // Check for previous uploads on page load
+    function checkPreviousUploads() {
+        const previousFiles = loadUploadState();
+        if (previousFiles.length > 0) {
+            showPreviousUploadsNotification(previousFiles);
+        }
+    }
+
+    function showPreviousUploadsNotification(files) {
+        const notification = document.createElement('div');
+        notification.className = 'alert alert-info alert-dismissible fade show mt-3';
+        notification.innerHTML = `
+            <strong><i class="bi bi-info-circle"></i> Previous Upload Found!</strong>
+            You have ${files.length} file(s) from a previous session. 
+            <button type="button" class="btn btn-sm btn-outline-primary ms-2" onclick="restorePreviousSession()">
+                <i class="bi bi-arrow-clockwise"></i> Restore Session
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="clearPreviousSession()">
+                <i class="bi bi-x"></i> Start Fresh
+            </button>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.querySelector('.card-body').insertBefore(notification, document.querySelector('.supported-formats'));
+    }
+
+    // Global functions for notification buttons
+    window.restorePreviousSession = function() {
+        const previousFiles = loadUploadState();
+        if (previousFiles.length > 0) {
+            // Extract file IDs and redirect to status page with restore parameter
+            const fileIds = previousFiles.map(f => f.id).join(',');
+            window.location.href = "{% url 'uploads:user-upload-status' %}?restore_files=" + encodeURIComponent(fileIds);
+        }
+    };
+
+    window.clearPreviousSession = function() {
+        clearUploadState();
+        // Remove the notification
+        const notification = document.querySelector('.alert-info');
+        if (notification) notification.remove();
+    };
+
+    // Check for previous uploads when page loads
+    console.log('Checking for previous uploads...');
+    checkPreviousUploads();
+
+    // File type icons
+    const getFileIcon = (filename) => {
+        const ext = filename.split('.').pop().toLowerCase();
+        switch(ext) {
+            case 'hy3': return 'bi-file-text';
+            case 'zip': return 'bi-file-zip';
+            case 'xlsx': return 'bi-file-earmark-excel';
+            default: return 'bi-file';
+        }
+    };
+
+    // Format file size
+    const formatFileSize = (bytes) => {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return Math.round(bytes / 1024) + ' KB';
+        return Math.round(bytes / 1048576) + ' MB';
+    };
+
+    // Update file display
+    const updateFileDisplay = () => {
+        selectedFiles.innerHTML = '';
+        
+        if (files.length === 0) {
+            fileList.style.display = 'none';
+            submitBtn.disabled = true;
+            clearBtn.disabled = true;
+            return;
+        }
+
+        fileList.style.display = 'block';
+        submitBtn.disabled = false;
+        clearBtn.disabled = false;
+
+        files.forEach((file, index) => {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            
+            fileItem.innerHTML = `
+                <div class="file-info">
+                    <i class="bi ${getFileIcon(file.name)} file-icon"></i>
+                    <span>${file.name}</span>
+                    <span class="file-size">${formatFileSize(file.size)}</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeFile(${index})">
+                    <i class="bi bi-x"></i>
+                </button>
+            `;
+            
+            selectedFiles.appendChild(fileItem);
+        });
+    };
+
+    // Remove file
+    window.removeFile = (index) => {
+        files.splice(index, 1);
+        updateFileDisplay();
+    };
+
+    // Handle file selection
+    const handleFiles = (newFiles) => {
+        const validExtensions = ['.hy3', '.zip', '.xlsx'];
+        const maxFileSize = 10 * 1024 * 1024; // 10MB
+        const maxFiles = 10;
+
+        Array.from(newFiles).forEach(file => {
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            
+            if (!validExtensions.includes(ext)) {
+                alert(`File "${file.name}" has an unsupported format. Please upload HY3, ZIP, or XLSX files only.`);
+                return;
+            }
+            
+            if (file.size > maxFileSize) {
+                alert(`File "${file.name}" is too large. Maximum size is 10MB.`);
+                return;
+            }
+            
+            if (files.length >= maxFiles) {
+                alert('You can upload a maximum of 10 files at once.');
+                return;
+            }
+            
+            // Check for duplicates
+            if (files.some(f => f.name === file.name && f.size === file.size)) {
+                alert(`File "${file.name}" is already selected.`);
+                return;
+            }
+            
+            files.push(file);
+        });
+        
+        updateFileDisplay();
+    };
+
+    // Click to browse
+    uploadZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+        handleFiles(e.target.files);
+    });
+
+    // Drag and drop
+    uploadZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadZone.classList.add('dragover');
+    });
+
+    uploadZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+    });
+
+    uploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        handleFiles(e.dataTransfer.files);
+    });
+
+    // Clear all files
+    clearBtn.addEventListener('click', () => {
+        files = [];
+        fileInput.value = '';
+        updateFileDisplay();
+    });
+
+    // Form submission
+    uploadForm.addEventListener('submit', (e) => {
+        if (files.length === 0) {
+            e.preventDefault();
+            alert('Please select at least one file to upload.');
+            return;
+        }
+
+        // Create new FormData and add files
+        const formData = new FormData(uploadForm);
+        
+        // Clear existing files input
+        formData.delete('files');
+        
+        // Add selected files
+        files.forEach(file => {
+            formData.append('files', file);
+        });
+
+        // Show loading state
+        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Uploading...';
+        submitBtn.disabled = true;
+
+        // Submit via fetch
+        console.log('Starting upload...');
+        fetch(uploadForm.action, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+            },
+            body: formData,
+        }).then(response => {
+            console.log('Upload response received:', response);
+            // Try to parse as JSON first
+            const contentType = response.headers.get('content-type');
+            console.log('Content type:', contentType);
+            
+            if (contentType && contentType.includes('application/json')) {
+                console.log('Processing JSON response...');
+                return response.json().then(data => {
+                    console.log('JSON data received:', data);
+                    if (data.success && data.uploaded_files) {
+                        console.log('Saving uploaded files to localStorage:', data.uploaded_files);
+                        // Save uploaded files to localStorage
+                        saveUploadedFiles(data.uploaded_files);
+                    }
+                    // Redirect to status page
+                    window.location.href = "{% url 'uploads:user-upload-status' %}";
+                });
+            } else {
+                console.log('Processing non-JSON response...');
+                // Handle regular form response (redirect)
+                if (response.redirected) {
+                    console.log('Following redirect to:', response.url);
+                    window.location.href = response.url;
+                } else {
+                    console.log('Updating page content...');
+                    return response.text().then(text => {
+                        document.body.innerHTML = text;
+                    });
+                }
+            }
+        }).catch(error => {
+            console.error('Upload error:', error);
+            alert('Upload failed. Please try again.');
+            submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload & Process Files';
+            submitBtn.disabled = false;
+        });
+
+        e.preventDefault();
+    });
+});
+</script>
+{% endblock %}

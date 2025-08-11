@@ -3,6 +3,9 @@ version: "3.8"
 services:
   redis-app-isca:
     image: redis:latest
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
 
   django-app-isca:
     image: jrrychen/isca-django
@@ -12,14 +15,17 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ./isca_swim_scorer:/usr/src/app
+      - media_volume:/usr/src/app/media
     ports:
-      - "8001:8000"
+      - "80:8000"
     environment:
       - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1
+      - ALLOWED_HOSTS=localhost,127.0.0.1,100.27.220.135,scorer.swimisca.org,swimisca.org,www.swimisca.org,*
       - SECRET_KEY=1243546547365
+      - X_FRAME_OPTIONS=SAMEORIGIN
     depends_on:
       - redis-app-isca
+    restart: unless-stopped
 
   celery-app-isca:
     image: jrrychen/isca-celery
@@ -29,10 +35,16 @@ services:
     command: celery --app=isca_swim_scorer worker --loglevel=info
     volumes:
       - ./isca_swim_scorer:/usr/src/app
+      - media_volume:/usr/src/app/media
     environment:
       - DEBUG=1
-      - ALLOWED_HOSTS=localhost,127.0.0.1
+      - ALLOWED_HOSTS=localhost,127.0.0.1,100.27.220.135,scorer.swimisca.org,swimisca.org,www.swimisca.org,*
       - SECRET_KEY=1243546547365
     depends_on:
       - redis-app-isca
       - django-app-isca
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  media_volume:

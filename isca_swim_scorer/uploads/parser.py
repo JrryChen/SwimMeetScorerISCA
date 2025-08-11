@@ -11,6 +11,7 @@ from meets.models import Meet, Event, Team, Swimmer, Result
 from uploads.models import UploadedFile
 from core.utils import format_swim_time, parse_swim_time
 from scoring.scoring_system import ScoringSystem
+from .dryland_parser import process_dryland_file, DrylandParseError
 
 # Add custom parser path and import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "hytek-parser"))
@@ -256,4 +257,72 @@ def process_hytek_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict
         
     except Exception as e:
         logger.error(f"Error processing Hytek file: {str(e)}", exc_info=True)
+        raise
+
+def determine_file_type(file_path: str) -> str:
+    """
+    Determine the type of file to process based on file extension
+    
+    Args:
+        file_path: Path to the file
+        
+    Returns:
+        File type string ('hytek', 'dryland', or 'unknown')
+    """
+    _, ext = os.path.splitext(file_path.lower())
+    
+    if ext in ['.hy3']:
+        return 'hytek'
+    elif ext in ['.zip']:
+        # Could be either - we'll need to check contents
+        return 'zip'
+    elif ext in ['.xlsx', '.xls']:
+        return 'dryland'
+    else:
+        return 'unknown'
+
+@transaction.atomic
+def process_uploaded_file(file_path: str, file_type: str, meet: Meet = None) -> Dict[str, List[dict]]:
+    """
+    Main file processing router that handles different file types
+    
+    Args:
+        file_path: Path to the file to process
+        file_type: Type of file (from UploadedFile.file_type)
+        meet: Optional Meet instance to associate results with
+        
+    Returns:
+        Dictionary of event results
+    """
+    try:
+        logger.info(f"Processing file: {file_path} (type: {file_type})")
+        
+        if file_type in ['HY3', 'ZIP']:
+            # Process as Hytek file
+            return process_hytek_file(file_path, meet)
+        elif file_type == 'XLSX':
+            # Process as dryland file
+            return process_dryland_file(file_path, meet)
+        else:
+            # Auto-detect based on file extension
+            detected_type = determine_file_type(file_path)
+            
+            if detected_type == 'hytek':
+                return process_hytek_file(file_path, meet)
+            elif detected_type == 'dryland':
+                return process_dryland_file(file_path, meet)
+            elif detected_type == 'zip':
+                # Try as Hytek first, then dryland
+                try:
+                    return process_hytek_file(file_path, meet)
+                except Exception:
+                    return process_dryland_file(file_path, meet)
+            else:
+                raise ValueError(f"Unsupported file type: {file_type}")
+                
+    except DrylandParseError as e:
+        logger.error(f"Dryland parsing error: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Error processing file: {str(e)}", exc_info=True)
         raise

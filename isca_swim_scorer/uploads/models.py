@@ -23,6 +23,7 @@ class UploadedFile(TimeStampedModel):
     FILE_TYPES = (
         ('HY3', 'HY3 - Meet Manager Export'),
         ('ZIP', 'ZIP - Compressed Folder containing HY3 file'),
+        ('XLSX', 'XLSX - Dryland Events Template'),
     )
 
     SOURCE_TYPES = (

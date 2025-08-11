@@ -28,9 +28,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . /usr/src/app/
 
-# Create non-root user for security
+# Create non-root user and set up permissions
 RUN adduser --disabled-password --gecos '' appuser \
-    && chown -R appuser:appuser /usr/src/app
+    && mkdir -p /usr/src/app/data /usr/src/app/media /usr/src/app/static \
+    && chown -R appuser:appuser /usr/src/app \
+    && chmod -R 755 /usr/src/app
+
 USER appuser
 
 # Expose port

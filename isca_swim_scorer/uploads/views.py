@@ -1,8 +1,11 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
+from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.decorators import login_required
+from django.utils.decorators import method_decorator
 from django.views.generic import CreateView, ListView, DeleteView
 from django.urls import reverse_lazy
-from django.http import JsonResponse, FileResponse
+from django.http import JsonResponse, FileResponse, HttpResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.cache import cache_page
@@ -76,6 +79,7 @@ def rate_limit_check(request, action, limit=10, window=3600):
     cache.set(cache_key, current_count + 1, window)
     return False
 
+@method_decorator(staff_member_required, name='dispatch')
 class UploadedFileListView(ListView):
     model = UploadedFile
     template_name = 'uploads/file_list.html'
@@ -86,6 +90,7 @@ class UploadedFileListView(ListView):
         context['download_url'] = reverse_lazy('uploads:upload-download')
         return context
 
+@method_decorator(staff_member_required, name='dispatch')
 class UploadedFileCreateView(CreateView):
     model = UploadedFile
     template_name = 'uploads/file_upload.html'
@@ -144,11 +149,15 @@ class UploadedFileCreateView(CreateView):
             file_path = form.instance.file.path
             
             # Process the file based on its type
-            if form.instance.file_type in ['HY3', 'ZIP']:
+            if form.instance.file_type in ['HY3', 'ZIP', 'XLSX']:
                 # Create a new meet if one doesn't exist
                 if not form.instance.meet:
                     # Extract meet name from filename
-                    meet_name = form.instance.original_filename.replace('.hy3', '').replace('.zip', '')
+                    meet_name = form.instance.original_filename.replace('.hy3', '').replace('.zip', '').replace('.xlsx', '').replace('.xls', '')
+                    
+                    # For dryland files, add "Dryland" prefix
+                    if form.instance.file_type == 'XLSX':
+                        meet_name = f"Dryland Events - {meet_name}"
                     
                     # Use today's date if we can't extract it from filename
                     meet_date = date.today()
@@ -177,7 +186,10 @@ class UploadedFileCreateView(CreateView):
                 form.instance.celery_task_id = task.id
                 form.instance.save()
                 
-                messages.success(self.request, 'File uploaded successfully! Processing will begin shortly.')
+                if form.instance.file_type == 'XLSX':
+                    messages.success(self.request, 'Dryland file uploaded successfully! Processing will begin shortly.')
+                else:
+                    messages.success(self.request, 'File uploaded successfully! Processing will begin shortly.')
             
         except (ValueError, zipfile.BadZipFile, OSError, IOError) as e:
             # Handle specific file processing errors
@@ -216,6 +228,7 @@ class UploadedFileDeleteView(DeleteView):
         return response
 
 @require_http_methods(["GET"])
+@staff_member_required
 def get_file_results(request, pk):
     """API endpoint to get the results of a processed file"""
     try:
@@ -243,6 +256,23 @@ def get_file_results(request, pk):
             event_results = []
             results_list = []
             
+            # Format age group for display
+            age_group = ""
+            if event.min_age and event.max_age:
+                # If max_age is unrealistically high (like 109), treat as open
+                if event.max_age >= 99:
+                    age_group = f"{event.min_age} & Over" if event.min_age > 1 else "Open"
+                elif event.min_age == event.max_age:
+                    age_group = f"{event.min_age}"
+                else:
+                    age_group = f"{event.min_age}-{event.max_age}"
+            elif event.min_age:
+                age_group = f"{event.min_age} & Over"
+            elif event.max_age and event.max_age < 99:
+                age_group = f"Under {event.max_age}"
+            else:
+                age_group = "Open"
+            
             # First collect all results
             for result in event.results.all():
                 # Format times for display
@@ -268,10 +298,10 @@ def get_file_results(request, pk):
                     'prelim_time': prelim_time,
                     'swimoff_time': swimoff_time,
                     'final_time': final_time,
-                    'prelim_points': f"{result.prelim_points:.2f}" if result.prelim_points > 0 else None,
-                    'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else None,
-                    'final_points': f"{result.final_points:.2f}" if result.final_points > 0 else None,
-                    'best_points': f"{result.best_points:.2f}" if result.best_points > 0 else None,
+                    'prelim_points': f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ("0.00" if result.prelim_time and result.prelim_time > 0 else None),
+                    'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ("0.00" if result.swim_off_time and result.swim_off_time > 0 else None),
+                    'final_points': f"{result.final_points:.2f}" if result.final_points > 0 else ("0.00" if result.final_time and result.final_time > 0 else None),
+                    'best_points': f"{result.best_points:.2f}" if result.best_points > 0 else ("0.00" if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else None),
                     # Add raw times for sorting
                     '_final_time': result.final_time if result.final_time and result.final_time > 0 else float('inf'),
                     '_swimoff_time': result.swim_off_time if result.swim_off_time and result.swim_off_time > 0 else float('inf'),
@@ -293,7 +323,9 @@ def get_file_results(request, pk):
                 del result['_prelim_time']
                 event_results.append(result)
                 
-            results[event.name] = event_results
+            # Include age group in event name
+            event_name_with_age = f"{event.name} - {age_group}"
+            results[event_name_with_age] = event_results
         
         return JsonResponse({
             'results': results
@@ -315,12 +347,31 @@ def get_file_results(request, pk):
         }, status=500)
 
 @require_http_methods(["GET"])
+@staff_member_required
 def download_file(request, pk):
     uploaded_file = get_object_or_404(UploadedFile, pk=pk)
     file_path = uploaded_file.file.path
     return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=uploaded_file.original_filename)
 
 @require_http_methods(["GET"])
+def download_dryland_template(request):
+    """Download the DrylandEventTemplate.xlsx file"""
+    template_filename = "DrylandEventTemplate.xlsx"
+    template_path = os.path.join(settings.BASE_DIR, template_filename)
+    
+    if not os.path.exists(template_path):
+        return JsonResponse({'status': 'error', 'error': 'Template file not found'}, status=404)
+    
+    try:
+        response = FileResponse(open(template_path, 'rb'), as_attachment=True)
+        response['Content-Disposition'] = f'attachment; filename="{template_filename}"'
+        return response
+    except (OSError, IOError) as e:
+        logger.error(f"Error serving template file {template_path}: {str(e)}")
+        return JsonResponse({'status': 'error', 'error': 'Error serving template file'}, status=500)
+
+@require_http_methods(["GET"])
+@staff_member_required
 def get_file_status(request, pk):
     """API endpoint to get the processing status of a file"""
     try:
@@ -355,6 +406,7 @@ def get_file_status(request, pk):
         }, status=500)
 
 @require_http_methods(["POST"])
+@staff_member_required
 def delete_file(request, pk):
     """API endpoint to delete a file"""
     try:
@@ -365,8 +417,12 @@ def delete_file(request, pk):
         
         # Delete the file from storage
         if uploaded_file.file:
-            if os.path.isfile(uploaded_file.file.path):
-                os.remove(uploaded_file.file.path)
+            try:
+                if os.path.isfile(uploaded_file.file.path):
+                    os.remove(uploaded_file.file.path)
+            except OSError as e:
+                # File might not exist or permission denied, log it but continue
+                print(f"Warning: Could not delete file {uploaded_file.file.path}: {e}")
         
         # Delete the database record
         uploaded_file.delete()
@@ -387,6 +443,7 @@ def delete_file(request, pk):
         }, status=500)
 
 @require_http_methods(["POST"])
+@staff_member_required
 def delete_all_files(request):
     """API endpoint to delete all files"""
     # Rate limiting for destructive operations
@@ -402,8 +459,13 @@ def delete_all_files(request):
         
         # Delete each file from storage
         for file in files:
-            if file.file and os.path.isfile(file.file.path):
-                os.remove(file.file.path)
+            if file.file:
+                try:
+                    if os.path.isfile(file.file.path):
+                        os.remove(file.file.path)
+                except OSError as e:
+                    # File might not exist or permission denied, log it but continue
+                    print(f"Warning: Could not delete file {file.file.path}: {e}")
         
         # Get all meets that will be orphaned
         meets_to_delete = Meet.objects.filter(files__isnull=True)
@@ -428,6 +490,7 @@ def delete_all_files(request):
 
 
 @require_http_methods(["POST"])
+@staff_member_required
 def export_results(request, file_id):
     """API endpoint to export meet results as CSV files or trigger export if missing"""
     try:
@@ -446,6 +509,7 @@ def export_results(request, file_id):
         return JsonResponse({'status': 'error', 'error': str(e)})
 
 @require_http_methods(["GET"])
+@staff_member_required
 def get_export_status(request, meet_id):
     """API endpoint to check if export zip exists for a meet"""
     zip_path = get_export_zip_path(meet_id)
@@ -454,6 +518,7 @@ def get_export_status(request, meet_id):
     return JsonResponse({'status': 'processing'})
 
 @require_http_methods(["GET"])
+@staff_member_required
 def download_export_zip(request, meet_id):
     """Download the exported zip file for a meet"""
     zip_path = get_export_zip_path(meet_id)
@@ -498,6 +563,7 @@ def get_task_status(request, task_id):
 
 
 @require_http_methods(["GET"])
+@staff_member_required
 def get_combined_results(request):
     """API endpoint to get combined results from all meets as JSON, grouped by event type and reporting age band."""
     from meets.models import Event, Result
@@ -539,15 +605,52 @@ def get_combined_results(request):
         type_key = event_type_key(event)
         if type_key not in event_type_names:
             event_type_names[type_key] = event_type_display(event)
+        # Format age group for display
+        age_group = ""
+        if event.min_age and event.max_age:
+            # If max_age is unrealistically high (like 109), treat as open
+            if event.max_age >= 99:
+                age_group = f"{event.min_age}+" if event.min_age > 1 else "Open"
+            elif event.min_age == event.max_age:
+                age_group = f"{event.min_age}"
+            else:
+                age_group = f"{event.min_age}-{event.max_age}"
+        elif event.min_age:
+            age_group = f"{event.min_age}+"
+        elif event.max_age and event.max_age < 99:
+            age_group = f"Under {event.max_age}"
+        else:
+            age_group = "Open"
+        
         for result in event.results.all():
             swimmer_age = result.swimmer.age if result.swimmer.age and result.swimmer.age > 0 else None
             age_band = get_reporting_age_band(swimmer_age)
             if not age_band:
                 continue  # skip if no valid age
+                
+            # Check if swimmer has any valid time - skip if no results
+            has_valid_time = (
+                (result.prelim_time and result.prelim_time > 0) or 
+                (result.swim_off_time and result.swim_off_time > 0) or 
+                (result.final_time and result.final_time > 0)
+            )
+            if not has_valid_time:
+                continue  # skip swimmers with no valid times
+                
             prelim_time = format_swim_time(result.prelim_time) if result.prelim_time and result.prelim_time > 0 else "-"
             swimoff_time = format_swim_time(result.swim_off_time) if result.swim_off_time and result.swim_off_time > 0 else "-"
             final_time = format_swim_time(result.final_time) if result.final_time and result.final_time > 0 else "-"
             best_time = result.best_time if hasattr(result, 'best_time') else (result.final_time or result.prelim_time or result.swim_off_time or float('inf'))
+            
+            # Get the best formatted time for duplicate detection
+            best_formatted_time = "-"
+            if result.final_time and result.final_time > 0:
+                best_formatted_time = final_time
+            elif result.prelim_time and result.prelim_time > 0:
+                best_formatted_time = prelim_time
+            elif result.swim_off_time and result.swim_off_time > 0:
+                best_formatted_time = swimoff_time
+            
             result_data = {
                 'meet': result.event.meet.name,
                 'swimmer': result.swimmer.full_name,
@@ -556,24 +659,42 @@ def get_combined_results(request):
                 'prelim_time': prelim_time,
                 'swimoff_time': swimoff_time,
                 'final_time': final_time,
-                'prelim_points': f"{result.prelim_points:.2f}" if result.prelim_points > 0 else None,
-                'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else None,
-                'final_points': f"{result.final_points:.2f}" if result.final_points > 0 else None,
-                'best_points': f"{result.best_points:.2f}" if result.best_points > 0 else None,
+                'prelim_points': f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ("0.00" if result.prelim_time and result.prelim_time > 0 else "-"),
+                'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ("0.00" if result.swim_off_time and result.swim_off_time > 0 else "-"),
+                'final_points': f"{result.final_points:.2f}" if result.final_points > 0 else ("0.00" if result.final_time and result.final_time > 0 else "-"),
+                'best_points': f"{result.best_points:.2f}" if result.best_points > 0 else ("0.00" if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else "-"),
                 '_sort_time': best_time if best_time and best_time > 0 else float('inf'),
+                '_duplicate_key': (result.swimmer.full_name, swimmer_age, result.swimmer.team.code if result.swimmer.team else None, best_formatted_time),
             }
-            group_label = f"{event_type_names[type_key]} - Age {age_band}"
+            group_label = f"{event_type_names[type_key]} - {age_group} - Age {age_band}"
             grouped_results[group_label].append(result_data)
 
-    # Sort each group by best time
+    # Remove duplicates and sort each group by best time
     for group in grouped_results:
-        grouped_results[group].sort(key=lambda x: x['_sort_time'])
-        for r in grouped_results[group]:
+        # Remove duplicates based on name, age, team, and time
+        seen_duplicates = set()
+        unique_results = []
+        
+        for result in grouped_results[group]:
+            duplicate_key = result['_duplicate_key']
+            if duplicate_key not in seen_duplicates:
+                seen_duplicates.add(duplicate_key)
+                unique_results.append(result)
+        
+        # Sort by best time
+        unique_results.sort(key=lambda x: x['_sort_time'])
+        
+        # Clean up temporary keys
+        for r in unique_results:
             del r['_sort_time']
+            del r['_duplicate_key']
+        
+        grouped_results[group] = unique_results
 
     return JsonResponse({'results': grouped_results})
 
 @require_http_methods(["POST"])
+@staff_member_required
 def export_combined_results(request):
     """API endpoint to export combined results as CSV/ZIP or trigger export if missing"""
     try:
@@ -587,13 +708,479 @@ def export_combined_results(request):
         return JsonResponse({'status': 'error', 'error': str(e)})
 
 @require_http_methods(["GET"])
+@staff_member_required
 def get_combined_export_status(request):
     zip_path = get_combined_export_zip_path()
     if os.path.exists(zip_path):
         return JsonResponse({'status': 'ready', 'download_url': '/uploads/exports/combined/'})
     return JsonResponse({'status': 'processing'})
 
+
+# User Upload Views (No Authentication Required)
+def user_upload_view(request):
+    """View for users to upload multiple files and get results"""
+    from .forms import UserMultipleFileUploadForm
+    
+    if request.method == 'POST':
+        form = UserMultipleFileUploadForm()  # Empty form since we handle files manually
+        files = request.FILES.getlist('files')
+        
+        # Validate files
+        errors = []
+        if not files:
+            errors.append('Please select at least one file to upload.')
+        
+        if len(files) > 10:  # Limit to 10 files at once
+            errors.append('You can upload a maximum of 10 files at once.')
+        
+        valid_extensions = ['.hy3', '.zip', '.xlsx']
+        
+        for file in files:
+            # Check file size
+            if file.size > 10 * 1024 * 1024:  # 10MB limit
+                errors.append(f'File "{file.name}" is too large. Maximum size is 10MB.')
+                continue
+            
+            # Check file extension
+            ext = os.path.splitext(file.name)[1].lower()
+            if ext not in valid_extensions:
+                errors.append(f'File "{file.name}" has an unsupported format. Please upload HY3, ZIP, or XLSX files only.')
+                continue
+            
+            # Basic validation for ZIP files
+            if ext == '.zip':
+                try:
+                    file.seek(0)
+                    magic_bytes = file.read(4)
+                    file.seek(0)
+                    
+                    zip_signatures = [b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08']
+                    if not any(magic_bytes.startswith(sig) for sig in zip_signatures):
+                        errors.append(f'File "{file.name}" does not appear to be a valid ZIP archive.')
+                        continue
+                    
+                    # Test ZIP file integrity
+                    try:
+                        with zipfile.ZipFile(file, 'r') as zip_ref:
+                            zip_ref.namelist()
+                    except zipfile.BadZipFile:
+                        errors.append(f'File "{file.name}" is corrupted or not a valid ZIP archive.')
+                        continue
+                    finally:
+                        file.seek(0)
+                except Exception as e:
+                    errors.append(f'Error validating ZIP file "{file.name}".')
+                    continue
+            
+            # Basic validation for HY3 files
+            elif ext == '.hy3':
+                try:
+                    file.seek(0)
+                    sample = file.read(100)
+                    file.seek(0)
+                    
+                    try:
+                        sample.decode('utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            sample.decode('latin-1')
+                        except UnicodeDecodeError:
+                            errors.append(f'File "{file.name}" does not appear to be a valid HY3 text file.')
+                            continue
+                except Exception as e:
+                    errors.append(f'Error validating HY3 file "{file.name}".')
+                    continue
+        
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+        else:
+            uploaded_files = []
+            
+            for file in files:
+                # Determine file type based on extension
+                ext = os.path.splitext(file.name)[1].lower()
+                if ext == '.hy3':
+                    file_type = 'HY3'
+                elif ext == '.zip':
+                    file_type = 'ZIP'  
+                elif ext == '.xlsx':
+                    file_type = 'XLSX'
+                else:
+                    continue  # Skip invalid files (should be caught by form validation)
+                
+                # Create UploadedFile instance
+                uploaded_file = UploadedFile.objects.create(
+                    file=file,
+                    original_filename=file.name,
+                    file_type=file_type,
+                    source_type='WEB'
+                )
+                uploaded_files.append(uploaded_file)
+                
+                # Process HY3 and ZIP files automatically
+                if file_type in ['HY3', 'ZIP']:
+                    from .tasks import process_hytek_file_task
+                    task = process_hytek_file_task.delay(uploaded_file.id)
+                    uploaded_file.celery_task_id = task.id
+                    uploaded_file.save()
+            
+            # Store uploaded file IDs in session for status tracking
+            request.session['uploaded_file_ids'] = [f.id for f in uploaded_files]
+            
+            messages.success(request, f'Successfully uploaded {len(uploaded_files)} files! Processing has begun.')
+            
+            # For AJAX requests, return JSON response
+            # Debug headers
+            logger.info(f"Content-Type: {request.headers.get('Content-Type')}")
+            logger.info(f"Accept: {request.headers.get('Accept')}")
+            
+            # Check if this is an AJAX request expecting JSON
+            accepts_json = 'application/json' in request.headers.get('Accept', '')
+            is_json_content = request.headers.get('Content-Type') == 'application/json'
+            
+            logger.info(f"Accepts JSON: {accepts_json}, Is JSON Content: {is_json_content}")
+            
+            if is_json_content or accepts_json:
+                logger.info("Returning JSON response for localStorage persistence")
+                uploaded_files_data = [{
+                    'id': f.id,
+                    'filename': f.original_filename,
+                    'file_type': f.file_type,
+                    'upload_date': f.created_at.isoformat(),
+                    'status': 'pending' if not f.is_processed else 'completed'
+                } for f in uploaded_files]
+                
+                return JsonResponse({
+                    'success': True,
+                    'message': f'Successfully uploaded {len(uploaded_files)} files! Processing has begun.',
+                    'uploaded_files': uploaded_files_data,
+                    'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP']])
+                })
+            
+            logger.info("Returning redirect response")
+            return redirect('uploads:user-upload-status')
+    else:
+        form = UserMultipleFileUploadForm()
+    
+    return render(request, 'uploads/user_upload.html', {'form': form})
+
+
+def user_upload_iframe_view(request):
+    """Iframe-friendly upload view for embedding in ISCA website"""
+    from .forms import UserMultipleFileUploadForm
+    
+    if request.method == 'POST':
+        form = UserMultipleFileUploadForm()  # Empty form since we handle files manually
+        files = request.FILES.getlist('files')
+        
+        # Validate files (same validation as regular upload view)
+        errors = []
+        if not files:
+            errors.append('Please select at least one file to upload.')
+        
+        if len(files) > 10:  # Limit to 10 files at once
+            errors.append('You can upload a maximum of 10 files at once.')
+        
+        valid_extensions = ['.hy3', '.zip', '.xlsx']
+        
+        for file in files:
+            # Check file size
+            if file.size > 10 * 1024 * 1024:  # 10MB limit
+                errors.append(f'File "{file.name}" is too large. Maximum size is 10MB.')
+                continue
+            
+            # Check file extension
+            ext = os.path.splitext(file.name)[1].lower()
+            if ext not in valid_extensions:
+                errors.append(f'File "{file.name}" has an unsupported format. Please upload HY3, ZIP, or XLSX files only.')
+                continue
+        
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+        else:
+            uploaded_files = []
+            
+            for file in files:
+                # Determine file type based on extension
+                ext = os.path.splitext(file.name)[1].lower()
+                if ext == '.hy3':
+                    file_type = 'HY3'
+                elif ext == '.zip':
+                    file_type = 'ZIP'  
+                elif ext == '.xlsx':
+                    file_type = 'XLSX'
+                else:
+                    continue  # Skip invalid files
+                
+                # Create UploadedFile instance
+                uploaded_file = UploadedFile.objects.create(
+                    file=file,
+                    original_filename=file.name,
+                    file_type=file_type,
+                    source_type='WEB'
+                )
+                uploaded_files.append(uploaded_file)
+                
+                # Process HY3 and ZIP files automatically
+                if file_type in ['HY3', 'ZIP']:
+                    from .tasks import process_hytek_file_task
+                    task = process_hytek_file_task.delay(uploaded_file.id)
+                    uploaded_file.celery_task_id = task.id
+                    uploaded_file.save()
+            
+            # Store uploaded file IDs in session for status tracking
+            request.session['uploaded_file_ids'] = [f.id for f in uploaded_files]
+            
+            messages.success(request, f'Successfully uploaded {len(uploaded_files)} files! Processing has begun.')
+            
+            # For AJAX requests, return JSON response
+            if request.headers.get('Content-Type') == 'application/json' or 'application/json' in request.headers.get('Accept', ''):
+                uploaded_files_data = [{
+                    'id': f.id,
+                    'filename': f.original_filename,
+                    'file_type': f.file_type,
+                    'upload_date': f.created_at.isoformat(),
+                    'status': 'pending' if not f.is_processed else 'completed'
+                } for f in uploaded_files]
+                
+                return JsonResponse({
+                    'success': True,
+                    'message': f'Successfully uploaded {len(uploaded_files)} files! Processing has begun.',
+                    'uploaded_files': uploaded_files_data,
+                    'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP']])
+                })
+            
+            # For iframe, return success with files data instead of redirect
+            context = {
+                'form': form,
+                'uploaded_files': uploaded_files,
+                'upload_success': True,
+                'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP']])
+            }
+            return render(request, 'uploads/user_upload_iframe.html', context)
+    else:
+        form = UserMultipleFileUploadForm()
+    
+    return render(request, 'uploads/user_upload_iframe.html', {'form': form})
+
+
+def user_upload_status_view(request):
+    """View to show upload status and provide download links when ready"""
+    uploaded_file_ids = request.session.get('uploaded_file_ids', [])
+    
+    # If no session files, try to restore from localStorage via URL parameter
+    if not uploaded_file_ids and request.GET.get('restore_files'):
+        try:
+            restore_ids = [int(id) for id in request.GET.get('restore_files', '').split(',') if id.strip()]
+            if restore_ids:
+                # Verify these files exist and were uploaded recently (within 24 hours)
+                from datetime import datetime, timedelta
+                cutoff_time = datetime.now() - timedelta(hours=24)
+                restored_files = UploadedFile.objects.filter(
+                    id__in=restore_ids, 
+                    created_at__gte=cutoff_time
+                )
+                if restored_files.exists():
+                    uploaded_file_ids = [f.id for f in restored_files]
+                    request.session['uploaded_file_ids'] = uploaded_file_ids
+        except (ValueError, TypeError):
+            pass  # Invalid restore data, continue normally
+    
+    if not uploaded_file_ids:
+        return redirect('uploads:user-upload')
+    
+    uploaded_files = UploadedFile.objects.filter(id__in=uploaded_file_ids)
+    
+    # Check processing status
+    processing_complete = all(
+        f.is_processed or f.file_type == 'XLSX' 
+        for f in uploaded_files
+    )
+    
+    context = {
+        'files': uploaded_files,
+        'processing_complete': processing_complete,
+    }
+    
+    return render(request, 'uploads/user_status.html', context)
+
+
 @require_http_methods(["GET"])
+def user_download_results(request, file_id):
+    """Download ZIP file containing both by-event and by-swimmer CSV results for a specific file"""
+    uploaded_file = get_object_or_404(UploadedFile, id=file_id)
+    
+    # Only allow download if file is processed and has a meet
+    if not uploaded_file.is_processed or not uploaded_file.meet:
+        return JsonResponse({'error': 'Results not available'}, status=400)
+    
+    try:
+        from .tasks import export_meet_results_as_zip
+        zip_path = export_meet_results_as_zip(uploaded_file.meet.id)
+        
+        if not zip_path or not os.path.exists(zip_path):
+            return JsonResponse({'error': 'Export file not found'}, status=404)
+        
+        # Create download response
+        with open(zip_path, 'rb') as f:
+            response = HttpResponse(f.read(), content_type='application/zip')
+            filename = f"{uploaded_file.meet.name}_results.zip"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+            
+    except Exception as e:
+        logger.error(f"Error generating ZIP for file {file_id}: {str(e)}")
+        return JsonResponse({'error': 'Error generating results'}, status=500)
+
+
+@require_http_methods(["GET"])
+def user_file_status_api(request, file_id):
+    """API endpoint to check processing status of a user's file"""
+    try:
+        uploaded_file = get_object_or_404(UploadedFile, id=file_id)
+        
+        status = 'pending'
+        if uploaded_file.is_processed:
+            status = 'completed'
+        elif uploaded_file.celery_task_id:
+            status = 'processing'
+        
+        return JsonResponse({
+            'status': status,
+            'filename': uploaded_file.original_filename,
+            'file_type': uploaded_file.get_file_type_display(),
+            'can_download': uploaded_file.is_processed and uploaded_file.meet is not None
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@require_http_methods(["GET"])
+def user_view_results(request, file_id):
+    """API endpoint for users to view results of a processed file"""
+    try:
+        uploaded_file = get_object_or_404(UploadedFile, id=file_id)
+        
+        if not uploaded_file.is_processed:
+            return JsonResponse({
+                'error': 'File has not been processed yet'
+            }, status=400)
+            
+        if uploaded_file.file_type not in ['HY3', 'ZIP']:
+            return JsonResponse({
+                'error': 'File type not supported for results'
+            }, status=400)
+            
+        if not uploaded_file.meet:
+            return JsonResponse({
+                'error': 'No meet data available for this file'
+            }, status=400)
+        
+        # Get results from the database with optimized queries
+        meet = uploaded_file.meet
+        results = {}
+        
+        # Optimize queries with select_related and prefetch_related
+        for event in meet.events.select_related('meet').prefetch_related(
+            'results__swimmer__team'
+        ).all():
+            event_results = []
+            results_list = []
+            
+            # Format age group for display
+            age_group = ""
+            if event.min_age and event.max_age:
+                # If max_age is unrealistically high (like 109), treat as open
+                if event.max_age >= 99:
+                    age_group = f"{event.min_age} & Over" if event.min_age > 1 else "Open"
+                elif event.min_age == event.max_age:
+                    age_group = f"{event.min_age}"
+                else:
+                    age_group = f"{event.min_age}-{event.max_age}"
+            elif event.min_age:
+                age_group = f"{event.min_age} & Over"
+            elif event.max_age and event.max_age < 99:
+                age_group = f"Under {event.max_age}"
+            else:
+                age_group = "Open"
+            
+            # Collect all results that have points
+            for result in event.results.all():
+                # Skip results that don't have any points
+                has_points = any([
+                    result.prelim_points and result.prelim_points > 0,
+                    result.swim_off_points and result.swim_off_points > 0, 
+                    result.final_points and result.final_points > 0,
+                    result.best_points and result.best_points > 0
+                ])
+                
+                if not has_points:
+                    continue
+                
+                # Format times for display
+                prelim_time = format_swim_time(result.prelim_time) if result.prelim_time and result.prelim_time > 0 else "-"
+                swimoff_time = format_swim_time(result.swim_off_time) if result.swim_off_time and result.swim_off_time > 0 else "-"
+                final_time = format_swim_time(result.final_time) if result.final_time and result.final_time > 0 else "-"
+                
+                # Format age for display
+                display_age = "N/A" if not result.swimmer.age or result.swimmer.age == 0 else result.swimmer.age
+                
+                result_data = {
+                    'swimmer': result.swimmer.full_name,
+                    'age': display_age,
+                    'team_code': result.swimmer.team.code if result.swimmer.team else None,
+                    'prelim_time': prelim_time,
+                    'swimoff_time': swimoff_time,
+                    'final_time': final_time,
+                    'prelim_points': f"{result.prelim_points:.2f}" if result.prelim_points and result.prelim_points > 0 else ("0.00" if result.prelim_time and result.prelim_time > 0 else "-"),
+                    'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points and result.swim_off_points > 0 else ("0.00" if result.swim_off_time and result.swim_off_time > 0 else "-"),
+                    'final_points': f"{result.final_points:.2f}" if result.final_points and result.final_points > 0 else ("0.00" if result.final_time and result.final_time > 0 else "-"),
+                    'best_points': f"{result.best_points:.2f}" if result.best_points and result.best_points > 0 else ("0.00" if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else "-"),
+                    # Add raw times for sorting
+                    '_final_time': result.final_time if result.final_time and result.final_time > 0 else float('inf'),
+                    '_swimoff_time': result.swim_off_time if result.swim_off_time and result.swim_off_time > 0 else float('inf'),
+                    '_prelim_time': result.prelim_time if result.prelim_time and result.prelim_time > 0 else float('inf')
+                }
+                results_list.append(result_data)
+            
+            # Sort the results by time (fastest first)
+            results_list.sort(key=lambda x: (
+                x['_final_time'],
+                x['_swimoff_time'],
+                x['_prelim_time']
+            ))
+            
+            # Remove the sorting fields and add to final results
+            for result in results_list:
+                del result['_final_time']
+                del result['_swimoff_time']
+                del result['_prelim_time']
+                event_results.append(result)
+                
+            # Only include events that have results with points
+            if event_results:
+                event_name_with_age = f"{event.name} - {age_group}"
+                results[event_name_with_age] = event_results
+        
+        return JsonResponse({
+            'results': results,
+            'meet_name': meet.name
+        })
+        
+    except UploadedFile.DoesNotExist:
+        return JsonResponse({
+            'error': 'File not found'
+        }, status=404)
+    except Exception as e:
+        logger.error(f"Unexpected error in user_view_results: {str(e)}")
+        return JsonResponse({
+            'error': 'An unexpected error occurred'
+        }, status=500)
+
+@require_http_methods(["GET"])
+@staff_member_required
 def download_combined_export_zip(request):
     zip_path = get_combined_export_zip_path()
     zip_filename = "combined_results.zip"

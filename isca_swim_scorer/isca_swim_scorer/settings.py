@@ -53,12 +53,25 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# Allow embedding in ISCA website iframes
+X_FRAME_OPTIONS = 'SAMEORIGIN'
+
+# CORS settings for ISCA integration
+CORS_ALLOWED_ORIGINS = [
+    "https://swimisca.org",
+    "https://www.swimisca.org",
+    "http://localhost:3000",  # For development
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = 'isca_swim_scorer.urls'
 

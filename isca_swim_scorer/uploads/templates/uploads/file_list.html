@@ -16,6 +16,13 @@
     <button id="exportCombinedResultsBtn" class="btn btn-success">
       Export Combined Results
     </button>
+    <a
+      href="{% url 'uploads:download-dryland-template' %}"
+      class="btn btn-outline-secondary"
+      title="Download DrylandEventTemplate.xlsx"
+    >
+      <i class="bi bi-file-earmark-excel"></i> Download Dryland Events Template
+    </a>
   </div>
 
   {% if files %}

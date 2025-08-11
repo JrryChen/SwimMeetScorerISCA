@@ -2,6 +2,22 @@
 <div class="container mt-4">
   <h1>Upload Meet File</h1>
 
+  <div class="alert alert-info mb-4">
+    <h5 class="alert-heading">
+      <i class="bi bi-download"></i> Download Template
+    </h5>
+    <p class="mb-2">
+      Need a dryland event template? Download our standard template file:
+    </p>
+    <a
+      href="{% url 'uploads:download-dryland-template' %}"
+      class="btn btn-outline-primary btn-sm"
+    >
+      <i class="bi bi-file-earmark-excel"></i> Download
+      DrylandEventTemplate.xlsx
+    </a>
+  </div>
+
   <div class="card">
     <div class="card-body">
       <form method="post" enctype="multipart/form-data" id="uploadForm">
@@ -37,6 +53,10 @@
                 <strong>ZIP</strong> - Compressed file containing HY3 file (e.g.
                 from Meet Manager)
               </li>
+              <li>
+                <strong>XLSX</strong> - Dryland Events Template with athlete
+                scores
+              </li>
             </ul>
           </div>
           {% if form.file_type.errors %}
@@ -60,9 +80,13 @@
         <div class="alert alert-info">
           <h5 class="alert-heading">File Requirements:</h5>
           <ul class="mb-0">
-            <li>Currently only HY3 files from Meet Manager are supported</li>
+            <li>HY3 files from Meet Manager are supported for swim events</li>
             <li>
               If uploading a ZIP file, it must contain exactly one HY3 file
+            </li>
+            <li>
+              XLSX files are supported for dryland events (must contain athlete
+              names, ages, and event scores)
             </li>
             <li>
               File names usually follow the format: "Meet Name-DDMonYYYY" (e.g.,
@@ -112,10 +136,19 @@
         return;
       }
 
+      if (selectedType === "XLSX" && !["xlsx", "xls"].includes(fileExt)) {
+        e.preventDefault();
+        alert(
+          "When selecting XLSX file type, you must upload a .xlsx or .xls file"
+        );
+        return;
+      }
+
       // Check if file type doesn't match selected type
       if (
-        (fileExt === "zip" && selectedType === "HY3") ||
-        (fileExt === "hy3" && selectedType === "ZIP")
+        (fileExt === "zip" && selectedType !== "ZIP") ||
+        (fileExt === "hy3" && selectedType !== "HY3") ||
+        (["xlsx", "xls"].includes(fileExt) && selectedType !== "XLSX")
       ) {
         e.preventDefault();
         alert(
