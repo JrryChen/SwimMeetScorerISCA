@@ -22,6 +22,24 @@ def format_swim_time(seconds):
         return f"{int(minutes)}:{seconds:05.2f}"
     else:
         return f"{seconds:.2f}"
+
+def format_dryland_score(score):
+    """
+    Format a dryland score to a human-readable format.
+    
+    Example:
+    - 23.45 -> "23.45"
+    - 100 -> "100"
+    - 0 -> "---"
+    """
+    if not score or score <= 0:
+        return "---"
+    
+    # For whole numbers, display as integer
+    if score == int(score):
+        return str(int(score))
+    else:
+        return f"{score:.2f}"
     
 def parse_swim_time(time_str):
     """

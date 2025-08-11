@@ -15,7 +15,7 @@ from django.conf import settings
 from .parser import process_hytek_file, process_uploaded_file
 from uploads.models import UploadedFile
 from meets.models import Meet, Event, Result, Swimmer
-from core.utils import format_swim_time
+from core.utils import format_swim_time, format_dryland_score
 from django.utils.text import slugify
 
 logger = logging.getLogger(__name__)
@@ -26,9 +26,9 @@ def debug_shared_task():
     return "Debug task completed"
 
 @shared_task(bind=True, max_retries=3)
-def process_hytek_file_task(self, file_id: int, meet_id: Optional[int] = None) -> Dict[str, Any]:
+def process_uploaded_file_task(self, file_id: int, meet_id: Optional[int] = None) -> Dict[str, Any]:
     """
-    Process a Hytek file asynchronously.
+    Process an uploaded file asynchronously (supports both Hytek and Dryland files).
     
     Args:
         file_id: ID of the UploadedFile instance
@@ -226,23 +226,35 @@ def export_meet_results_task(self, meet_id: int) -> Dict[str, Any]:
             # Write results by event
             with open(by_event_file, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Event', 'Swimmer', 'Age', 'Team', 'Prelim Time', 'Prelim Points',
-                                 'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
+                writer.writerow(['Event', 'Swimmer', 'Age', 'Team', 'Prelim Time/Score', 'Prelim Points',
+                                 'Swimoff Time/Score', 'Swimoff Points', 'Final Time/Score', 'Final Points', 'Best Points'])
                 # Optimize queries with select_related and prefetch_related
                 for event in meet.events.select_related('meet').prefetch_related(
                     'results__swimmer__team'
                 ).order_by('event_number'):
                     for result in event.results.all().order_by('final_place', 'prelim_place', 'swim_off_place'):
+                        # Check if this is a dryland event
+                        is_dryland = event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                        
+                        # Format time/score based on event type
+                        def format_time_or_score(value):
+                            if not value or value <= 0:
+                                return '-'
+                            if is_dryland:
+                                return format_dryland_score(value)
+                            else:
+                                return format_swim_time(value)
+                        
                         writer.writerow([
                             event.name,
                             result.swimmer.full_name,
                             result.swimmer.age or 'N/A',
                             result.swimmer.team.name,
-                            format_swim_time(result.prelim_time) if result.prelim_time else '-',
+                            format_time_or_score(result.prelim_time),
                             f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ('0.00' if result.prelim_time and result.prelim_time > 0 else '-'),
-                            format_swim_time(result.swim_off_time) if result.swim_off_time else '-',
+                            format_time_or_score(result.swim_off_time),
                             f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ('0.00' if result.swim_off_time and result.swim_off_time > 0 else '-'),
-                            format_swim_time(result.final_time) if result.final_time else '-',
+                            format_time_or_score(result.final_time),
                             f"{result.final_points:.2f}" if result.final_points > 0 else ('0.00' if result.final_time and result.final_time > 0 else '-'),
                             f"{result.best_points:.2f}" if result.best_points > 0 else ('0.00' if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else '-')
                         ])
@@ -250,8 +262,8 @@ def export_meet_results_task(self, meet_id: int) -> Dict[str, Any]:
             # Write results by swimmer
             with open(by_swimmer_file, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Swimmer', 'Age', 'Team', 'Event', 'Prelim Time', 'Prelim Points',
-                                 'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
+                writer.writerow(['Swimmer', 'Age', 'Team', 'Event', 'Prelim Time/Score', 'Prelim Points',
+                                 'Swimoff Time/Score', 'Swimoff Points', 'Final Time/Score', 'Final Points', 'Best Points'])
                 # Optimize queries with select_related and prefetch_related
                 for swimmer in meet.swimmers.select_related('team').prefetch_related(
                     'results__event'
@@ -268,8 +280,20 @@ def export_meet_results_task(self, meet_id: int) -> Dict[str, Any]:
                         if not has_points:
                             continue
                         
-                        # Format age group for this event
+                        # Check if this is a dryland event
                         event = result.event
+                        is_dryland = event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                        
+                        # Format time/score based on event type
+                        def format_time_or_score(value):
+                            if not value or value <= 0:
+                                return '-'
+                            if is_dryland:
+                                return format_dryland_score(value)
+                            else:
+                                return format_swim_time(value)
+                        
+                        # Format age group for this event
                         age_group = ""
                         if event.min_age and event.max_age:
                             # If max_age is unrealistically high (like 109), treat as open
@@ -293,11 +317,11 @@ def export_meet_results_task(self, meet_id: int) -> Dict[str, Any]:
                             swimmer.age or 'N/A',
                             swimmer.team.name,
                             event_name_with_age,
-                            format_swim_time(result.prelim_time) if result.prelim_time else '-',
+                            format_time_or_score(result.prelim_time),
                             f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ('0.00' if result.prelim_time and result.prelim_time > 0 else '-'),
-                            format_swim_time(result.swim_off_time) if result.swim_off_time else '-',
+                            format_time_or_score(result.swim_off_time),
                             f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ('0.00' if result.swim_off_time and result.swim_off_time > 0 else '-'),
-                            format_swim_time(result.final_time) if result.final_time else '-',
+                            format_time_or_score(result.final_time),
                             f"{result.final_points:.2f}" if result.final_points > 0 else ('0.00' if result.final_time and result.final_time > 0 else '-'),
                             f"{result.best_points:.2f}" if result.best_points > 0 else ('0.00' if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else '-')
                         ])
@@ -334,8 +358,8 @@ def export_combined_results_task(self) -> Dict[str, Any]:
             # Write results by event (across all meets)
             with open(by_event_file, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Meet', 'Event', 'Swimmer', 'Age', 'Team', 'Prelim Time', 'Prelim Points',
-                                 'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
+                writer.writerow(['Meet', 'Event', 'Swimmer', 'Age', 'Team', 'Prelim Time/Score', 'Prelim Points',
+                                 'Swimoff Time/Score', 'Swimoff Points', 'Final Time/Score', 'Final Points', 'Best Points'])
                 
                 # Track duplicates for filtering
                 seen_results = set()
@@ -354,14 +378,26 @@ def export_combined_results_task(self) -> Dict[str, Any]:
                         if not has_valid_time:
                             continue  # skip swimmers with no valid times
                         
-                        # Create unique key for duplicate detection (name, age, team, best time)
+                        # Check if this is a dryland event
+                        is_dryland = event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                        
+                        # Format time/score based on event type
+                        def format_time_or_score(value):
+                            if not value or value <= 0:
+                                return '-'
+                            if is_dryland:
+                                return format_dryland_score(value)
+                            else:
+                                return format_swim_time(value)
+                        
+                        # Create unique key for duplicate detection (name, age, team, best time/score)
                         best_time = ""
                         if result.final_time and result.final_time > 0:
-                            best_time = format_swim_time(result.final_time)
+                            best_time = format_time_or_score(result.final_time)
                         elif result.prelim_time and result.prelim_time > 0:
-                            best_time = format_swim_time(result.prelim_time)
+                            best_time = format_time_or_score(result.prelim_time)
                         elif result.swim_off_time and result.swim_off_time > 0:
-                            best_time = format_swim_time(result.swim_off_time)
+                            best_time = format_time_or_score(result.swim_off_time)
                         
                         duplicate_key = (
                             result.swimmer.full_name,
@@ -381,11 +417,11 @@ def export_combined_results_task(self) -> Dict[str, Any]:
                             result.swimmer.full_name,
                             result.swimmer.age or 'N/A',
                             result.swimmer.team.name,
-                            format_swim_time(result.prelim_time) if result.prelim_time else '-',
+                            format_time_or_score(result.prelim_time),
                             f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ('0.00' if result.prelim_time and result.prelim_time > 0 else '-'),
-                            format_swim_time(result.swim_off_time) if result.swim_off_time else '-',
+                            format_time_or_score(result.swim_off_time),
                             f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ('0.00' if result.swim_off_time and result.swim_off_time > 0 else '-'),
-                            format_swim_time(result.final_time) if result.final_time else '-',
+                            format_time_or_score(result.final_time),
                             f"{result.final_points:.2f}" if result.final_points > 0 else ('0.00' if result.final_time and result.final_time > 0 else '-'),
                             f"{result.best_points:.2f}" if result.best_points > 0 else ('0.00' if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else '-')
                         ])
@@ -393,8 +429,8 @@ def export_combined_results_task(self) -> Dict[str, Any]:
             # Write results by swimmer (across all meets)
             with open(by_swimmer_file, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Meet', 'Swimmer', 'Age', 'Team', 'Event', 'Prelim Time', 'Prelim Points',
-                                 'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
+                writer.writerow(['Meet', 'Swimmer', 'Age', 'Team', 'Event', 'Prelim Time/Score', 'Prelim Points',
+                                 'Swimoff Time/Score', 'Swimoff Points', 'Final Time/Score', 'Final Points', 'Best Points'])
                 
                 # Track duplicates for filtering
                 seen_swimmer_results = set()
@@ -413,14 +449,27 @@ def export_combined_results_task(self) -> Dict[str, Any]:
                         if not has_valid_time:
                             continue  # skip swimmers with no valid times
                         
-                        # Create unique key for duplicate detection (name, age, team, best time, event)
+                        # Check if this is a dryland event
+                        event = result.event
+                        is_dryland = event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                        
+                        # Format time/score based on event type
+                        def format_time_or_score(value):
+                            if not value or value <= 0:
+                                return '-'
+                            if is_dryland:
+                                return format_dryland_score(value)
+                            else:
+                                return format_swim_time(value)
+                        
+                        # Create unique key for duplicate detection (name, age, team, best time/score, event)
                         best_time = ""
                         if result.final_time and result.final_time > 0:
-                            best_time = format_swim_time(result.final_time)
+                            best_time = format_time_or_score(result.final_time)
                         elif result.prelim_time and result.prelim_time > 0:
-                            best_time = format_swim_time(result.prelim_time)
+                            best_time = format_time_or_score(result.prelim_time)
                         elif result.swim_off_time and result.swim_off_time > 0:
-                            best_time = format_swim_time(result.swim_off_time)
+                            best_time = format_time_or_score(result.swim_off_time)
                         
                         duplicate_key = (
                             swimmer.full_name,
@@ -440,11 +489,11 @@ def export_combined_results_task(self) -> Dict[str, Any]:
                             swimmer.age or 'N/A',
                             swimmer.team.name,
                             result.event.name,
-                            format_swim_time(result.prelim_time) if result.prelim_time else '-',
+                            format_time_or_score(result.prelim_time),
                             f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ('0.00' if result.prelim_time and result.prelim_time > 0 else '-'),
-                            format_swim_time(result.swim_off_time) if result.swim_off_time else '-',
+                            format_time_or_score(result.swim_off_time),
                             f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ('0.00' if result.swim_off_time and result.swim_off_time > 0 else '-'),
-                            format_swim_time(result.final_time) if result.final_time else '-',
+                            format_time_or_score(result.final_time),
                             f"{result.final_points:.2f}" if result.final_points > 0 else ('0.00' if result.final_time and result.final_time > 0 else '-'),
                             f"{result.best_points:.2f}" if result.best_points > 0 else ('0.00' if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else '-')
                         ])
@@ -487,8 +536,8 @@ def export_meet_results_as_zip(meet_id: int) -> str:
         # Write results by event
         with open(by_event_file, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Event', 'Swimmer', 'Age', 'Team', 'Prelim Time', 'Prelim Points',
-                             'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
+            writer.writerow(['Event', 'Swimmer', 'Age', 'Team', 'Prelim Time/Score', 'Prelim Points',
+                             'Swimoff Time/Score', 'Swimoff Points', 'Final Time/Score', 'Final Points', 'Best Points'])
             for event in meet.events.select_related('meet').prefetch_related(
                 'results__swimmer__team'
             ).order_by('event_number'):
@@ -522,17 +571,29 @@ def export_meet_results_as_zip(meet_id: int) -> str:
                     
                     if not has_points:
                         continue
+                    
+                    # Check if this is a dryland event
+                    is_dryland = event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                    
+                    # Format time/score based on event type
+                    def format_time_or_score(value):
+                        if not value or value <= 0:
+                            return '-'
+                        if is_dryland:
+                            return format_dryland_score(value)
+                        else:
+                            return format_swim_time(value)
                         
                     writer.writerow([
                         event_name_with_age,
                         result.swimmer.full_name,
                         result.swimmer.age or 'N/A',
                         result.swimmer.team.name,
-                        format_swim_time(result.prelim_time) if result.prelim_time else '-',
+                        format_time_or_score(result.prelim_time),
                         f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ('0.00' if result.prelim_time and result.prelim_time > 0 else '-'),
-                        format_swim_time(result.swim_off_time) if result.swim_off_time else '-',
+                        format_time_or_score(result.swim_off_time),
                         f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ('0.00' if result.swim_off_time and result.swim_off_time > 0 else '-'),
-                        format_swim_time(result.final_time) if result.final_time else '-',
+                        format_time_or_score(result.final_time),
                         f"{result.final_points:.2f}" if result.final_points > 0 else ('0.00' if result.final_time and result.final_time > 0 else '-'),
                         f"{result.best_points:.2f}" if result.best_points > 0 else ('0.00' if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else '-')
                     ])
@@ -540,8 +601,8 @@ def export_meet_results_as_zip(meet_id: int) -> str:
         # Write results by swimmer
         with open(by_swimmer_file, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Swimmer', 'Age', 'Team', 'Event', 'Prelim Time', 'Prelim Points',
-                             'Swimoff Time', 'Swimoff Points', 'Final Time', 'Final Points', 'Best Points'])
+            writer.writerow(['Swimmer', 'Age', 'Team', 'Event', 'Prelim Time/Score', 'Prelim Points',
+                             'Swimoff Time/Score', 'Swimoff Points', 'Final Time/Score', 'Final Points', 'Best Points'])
             # Optimize queries with select_related and prefetch_related
             for swimmer in meet.swimmers.select_related('team').prefetch_related(
                 'results__event'
@@ -577,17 +638,29 @@ def export_meet_results_as_zip(meet_id: int) -> str:
                         age_group = "Open"
                     
                     event_name_with_age = f"{event.name} - {age_group}"
+                    
+                    # Check if this is a dryland event
+                    is_dryland = event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                    
+                    # Format time/score based on event type
+                    def format_time_or_score(value):
+                        if not value or value <= 0:
+                            return '-'
+                        if is_dryland:
+                            return format_dryland_score(value)
+                        else:
+                            return format_swim_time(value)
                         
                     writer.writerow([
                         swimmer.full_name,
                         swimmer.age or 'N/A',
                         swimmer.team.name,
                         event_name_with_age,
-                        format_swim_time(result.prelim_time) if result.prelim_time else '-',
+                        format_time_or_score(result.prelim_time),
                         f"{result.prelim_points:.2f}" if result.prelim_points > 0 else ('0.00' if result.prelim_time and result.prelim_time > 0 else '-'),
-                        format_swim_time(result.swim_off_time) if result.swim_off_time else '-',
+                        format_time_or_score(result.swim_off_time),
                         f"{result.swim_off_points:.2f}" if result.swim_off_points > 0 else ('0.00' if result.swim_off_time and result.swim_off_time > 0 else '-'),
-                        format_swim_time(result.final_time) if result.final_time else '-',
+                        format_time_or_score(result.final_time),
                         f"{result.final_points:.2f}" if result.final_points > 0 else ('0.00' if result.final_time and result.final_time > 0 else '-'),
                         f"{result.best_points:.2f}" if result.best_points > 0 else ('0.00' if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else '-')
                     ])

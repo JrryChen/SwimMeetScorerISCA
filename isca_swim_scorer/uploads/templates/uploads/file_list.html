@@ -325,12 +325,31 @@
               );
             });
             if (!hasPoints) continue;
+            
+            // Sort results by final time/score (for swim events) or by points (for dryland events)
+            const sortedResults = [...results].sort((a, b) => {
+              // Check if this is a dryland event (has points in final_time field)
+              const isDryland = eventName.includes("Men's") || eventName.includes("Women's") || eventName.includes("Dryland");
+              
+              if (isDryland) {
+                // For dryland events, sort by best_points (highest first)
+                const aPoints = parseFloat(a.best_points) || 0;
+                const bPoints = parseFloat(b.best_points) || 0;
+                return bPoints - aPoints; // Descending order
+              } else {
+                // For swim events, sort by final_time (fastest first)
+                const aTime = parseFloat(a.final_time) || Infinity;
+                const bTime = parseFloat(b.final_time) || Infinity;
+                return aTime - bTime; // Ascending order
+              }
+            });
+            
             html += `<h4>${eventName}</h4>`;
             html += '<table class="table table-sm">';
             html +=
               "<thead><tr><th>Swimmer</th><th>Age</th><th>Team</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
             html += "<tbody>";
-            for (const result of results) {
+            for (const result of sortedResults) {
               html += `<tr>
                   <td>${result.swimmer}</td>
                   <td>${result.age}</td>
@@ -636,12 +655,31 @@
                 );
               });
               if (!hasPoints) continue;
+              
+              // Sort results by final time/score (for swim events) or by points (for dryland events)
+              const sortedResults = [...results].sort((a, b) => {
+                // Check if this is a dryland event (has points in final_time field)
+                const isDryland = eventName.includes("Men's") || eventName.includes("Women's") || eventName.includes("Dryland");
+                
+                if (isDryland) {
+                  // For dryland events, sort by best_points (highest first)
+                  const aPoints = parseFloat(a.best_points) || 0;
+                  const bPoints = parseFloat(b.best_points) || 0;
+                  return bPoints - aPoints; // Descending order
+                } else {
+                  // For swim events, sort by final_time (fastest first)
+                  const aTime = parseFloat(a.final_time) || Infinity;
+                  const bTime = parseFloat(b.final_time) || Infinity;
+                  return aTime - bTime; // Ascending order
+                }
+              });
+              
               html += `<h4>${eventName}</h4>`;
               html += '<table class="table table-sm">';
               html +=
                 "<thead><tr><th>Meet</th><th>Swimmer</th><th>Age</th><th>Team</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
               html += "<tbody>";
-              for (const result of results) {
+              for (const result of sortedResults) {
                 html += `<tr>
                   <td>${result.meet}</td>
                   <td>${result.swimmer}</td>

@@ -145,6 +145,7 @@
                                     <button class="btn btn-info view-results-btn mb-2" data-file-id="{{ file.id }}" data-meet-name="{{ file.meet.name }}">
                                         <i class="bi bi-eye"></i> View Results
                                     </button>
+                                    <!-- Download link for file {{ file.id }} -->
                                     <a href="{% url 'uploads:user-download-results' file.id }}" 
                                        class="btn btn-success">
                                         <i class="bi bi-file-zip"></i> Download Results (ZIP)
@@ -378,11 +379,11 @@ document.addEventListener('DOMContentLoaded', function() {
                                                     <th>Swimmer</th>
                                                     <th>Age</th>
                                                     <th>Team</th>
-                                                    <th>Prelim Time</th>
+                                                    <th>Prelim</th>
                                                     <th>Prelim Pts</th>
-                                                    <th>Swimoff Time</th>
+                                                    <th>Swimoff</th>
                                                     <th>Swimoff Pts</th>
-                                                    <th>Final Time</th>
+                                                    <th>Final</th>
                                                     <th>Final Pts</th>
                                                     <th>Best Pts</th>
                                                 </tr>

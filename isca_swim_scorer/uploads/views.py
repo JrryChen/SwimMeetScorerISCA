@@ -21,10 +21,10 @@ from django.conf import settings
 
 from .models import UploadedFile
 from .parser import process_hytek_file
-from .tasks import process_hytek_file_task, export_meet_results_task
+from .tasks import process_uploaded_file_task, export_meet_results_task
 from meets.models import Meet
 from scoring.scoring_system import ScoringSystem
-from core.utils import format_swim_time
+from core.utils import format_swim_time, format_dryland_score
 from core.models import Gender, Stroke, Course
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ class UploadedFileCreateView(CreateView):
                     form.instance.save()
                 
                 # Send task to Celery for processing
-                task = process_hytek_file_task.delay(form.instance.id, form.instance.meet.id)
+                task = process_uploaded_file_task.delay(form.instance.id, form.instance.meet.id)
                 form.instance.celery_task_id = task.id
                 form.instance.save()
                 
@@ -239,7 +239,7 @@ def get_file_results(request, pk):
                 'error': 'File has not been processed yet'
             }, status=400)
             
-        if uploaded_file.file_type not in ['HY3', 'ZIP']:
+        if uploaded_file.file_type not in ['HY3', 'ZIP', 'XLSX']:
             return JsonResponse({
                 'error': 'File type not supported for results'
             }, status=400)
@@ -275,10 +275,22 @@ def get_file_results(request, pk):
             
             # First collect all results
             for result in event.results.all():
-                # Format times for display
-                prelim_time = format_swim_time(result.prelim_time) if result.prelim_time and result.prelim_time > 0 else "-"
-                swimoff_time = format_swim_time(result.swim_off_time) if result.swim_off_time and result.swim_off_time > 0 else "-"
-                final_time = format_swim_time(result.final_time) if result.final_time and result.final_time > 0 else "-"
+                # Check if this is a dryland event
+                is_dryland = event.name.startswith('Men\'s') or event.name.startswith('Women\'s') or event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                
+                # Format time/score based on event type
+                def format_time_or_score(value):
+                    if not value or value <= 0:
+                        return "-"
+                    if is_dryland:
+                        return format_dryland_score(value)
+                    else:
+                        return format_swim_time(value)
+                
+                # Format times/scores for display
+                prelim_time = format_time_or_score(result.prelim_time)
+                swimoff_time = format_time_or_score(result.swim_off_time)
+                final_time = format_time_or_score(result.final_time)
                 
                 # Format age for display
                 display_age = "N/A" if not result.swimmer.age or result.swimmer.age == 0 else result.swimmer.age
@@ -323,8 +335,11 @@ def get_file_results(request, pk):
                 del result['_prelim_time']
                 event_results.append(result)
                 
-            # Include age group in event name
-            event_name_with_age = f"{event.name} - {age_group}"
+            # Include age group in event name (but not for dryland events that already have it)
+            if event.name.startswith('Men\'s') or event.name.startswith('Women\'s'):
+                event_name_with_age = event.name
+            else:
+                event_name_with_age = f"{event.name} - {age_group}"
             results[event_name_with_age] = event_results
         
         return JsonResponse({
@@ -637,9 +652,21 @@ def get_combined_results(request):
             if not has_valid_time:
                 continue  # skip swimmers with no valid times
                 
-            prelim_time = format_swim_time(result.prelim_time) if result.prelim_time and result.prelim_time > 0 else "-"
-            swimoff_time = format_swim_time(result.swim_off_time) if result.swim_off_time and result.swim_off_time > 0 else "-"
-            final_time = format_swim_time(result.final_time) if result.final_time and result.final_time > 0 else "-"
+            # Check if this is a dryland event
+            is_dryland = event.name.startswith('Men\'s') or event.name.startswith('Women\'s') or event.name.startswith('Dryland -') or event.stroke == 'OTH'
+            
+            # Format time/score based on event type
+            def format_time_or_score(value):
+                if not value or value <= 0:
+                    return "-"
+                if is_dryland:
+                    return format_dryland_score(value)
+                else:
+                    return format_swim_time(value)
+            
+            prelim_time = format_time_or_score(result.prelim_time)
+            swimoff_time = format_time_or_score(result.swim_off_time)
+            final_time = format_time_or_score(result.final_time)
             best_time = result.best_time if hasattr(result, 'best_time') else (result.final_time or result.prelim_time or result.swim_off_time or float('inf'))
             
             # Get the best formatted time for duplicate detection
@@ -818,10 +845,10 @@ def user_upload_view(request):
                 )
                 uploaded_files.append(uploaded_file)
                 
-                # Process HY3 and ZIP files automatically
-                if file_type in ['HY3', 'ZIP']:
-                    from .tasks import process_hytek_file_task
-                    task = process_hytek_file_task.delay(uploaded_file.id)
+                # Process HY3, ZIP, and XLSX files automatically
+                if file_type in ['HY3', 'ZIP', 'XLSX']:
+                    from .tasks import process_uploaded_file_task
+                    task = process_uploaded_file_task.delay(uploaded_file.id)
                     uploaded_file.celery_task_id = task.id
                     uploaded_file.save()
             
@@ -855,7 +882,7 @@ def user_upload_view(request):
                     'success': True,
                     'message': f'Successfully uploaded {len(uploaded_files)} files! Processing has begun.',
                     'uploaded_files': uploaded_files_data,
-                    'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP']])
+                    'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP', 'XLSX']])
                 })
             
             logger.info("Returning redirect response")
@@ -923,10 +950,10 @@ def user_upload_iframe_view(request):
                 )
                 uploaded_files.append(uploaded_file)
                 
-                # Process HY3 and ZIP files automatically
-                if file_type in ['HY3', 'ZIP']:
-                    from .tasks import process_hytek_file_task
-                    task = process_hytek_file_task.delay(uploaded_file.id)
+                # Process HY3, ZIP, and XLSX files automatically
+                if file_type in ['HY3', 'ZIP', 'XLSX']:
+                    from .tasks import process_uploaded_file_task
+                    task = process_uploaded_file_task.delay(uploaded_file.id)
                     uploaded_file.celery_task_id = task.id
                     uploaded_file.save()
             
@@ -949,7 +976,7 @@ def user_upload_iframe_view(request):
                     'success': True,
                     'message': f'Successfully uploaded {len(uploaded_files)} files! Processing has begun.',
                     'uploaded_files': uploaded_files_data,
-                    'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP']])
+                    'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP', 'XLSX']])
                 })
             
             # For iframe, return success with files data instead of redirect
@@ -957,7 +984,7 @@ def user_upload_iframe_view(request):
                 'form': form,
                 'uploaded_files': uploaded_files,
                 'upload_success': True,
-                'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP']])
+                'processing_count': len([f for f in uploaded_files if f.file_type in ['HY3', 'ZIP', 'XLSX']])
             }
             return render(request, 'uploads/user_upload_iframe.html', context)
     else:
@@ -1004,7 +1031,12 @@ def user_upload_status_view(request):
         'processing_complete': processing_complete,
     }
     
-    return render(request, 'uploads/user_status.html', context)
+    response = render(request, 'uploads/user_status.html', context)
+    # Add cache-busting headers to prevent template rendering issues
+    response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response['Pragma'] = 'no-cache'
+    response['Expires'] = '0'
+    return response
 
 
 @require_http_methods(["GET"])
@@ -1028,6 +1060,10 @@ def user_download_results(request, file_id):
             response = HttpResponse(f.read(), content_type='application/zip')
             filename = f"{uploaded_file.meet.name}_results.zip"
             response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            # Add cache-busting headers
+            response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response['Pragma'] = 'no-cache'
+            response['Expires'] = '0'
             return response
             
     except Exception as e:
@@ -1068,7 +1104,7 @@ def user_view_results(request, file_id):
                 'error': 'File has not been processed yet'
             }, status=400)
             
-        if uploaded_file.file_type not in ['HY3', 'ZIP']:
+        if uploaded_file.file_type not in ['HY3', 'ZIP', 'XLSX']:
             return JsonResponse({
                 'error': 'File type not supported for results'
             }, status=400)
@@ -1119,10 +1155,22 @@ def user_view_results(request, file_id):
                 if not has_points:
                     continue
                 
-                # Format times for display
-                prelim_time = format_swim_time(result.prelim_time) if result.prelim_time and result.prelim_time > 0 else "-"
-                swimoff_time = format_swim_time(result.swim_off_time) if result.swim_off_time and result.swim_off_time > 0 else "-"
-                final_time = format_swim_time(result.final_time) if result.final_time and result.final_time > 0 else "-"
+                # Check if this is a dryland event
+                is_dryland = event.name.startswith('Men\'s') or event.name.startswith('Women\'s') or event.name.startswith('Dryland -') or event.stroke == 'OTH'
+                
+                # Format time/score based on event type
+                def format_time_or_score(value):
+                    if not value or value <= 0:
+                        return "-"
+                    if is_dryland:
+                        return format_dryland_score(value)
+                    else:
+                        return format_swim_time(value)
+                
+                # Format times/scores for display
+                prelim_time = format_time_or_score(result.prelim_time)
+                swimoff_time = format_time_or_score(result.swim_off_time)
+                final_time = format_time_or_score(result.final_time)
                 
                 # Format age for display
                 display_age = "N/A" if not result.swimmer.age or result.swimmer.age == 0 else result.swimmer.age
@@ -1138,30 +1186,41 @@ def user_view_results(request, file_id):
                     'swimoff_points': f"{result.swim_off_points:.2f}" if result.swim_off_points and result.swim_off_points > 0 else ("0.00" if result.swim_off_time and result.swim_off_time > 0 else "-"),
                     'final_points': f"{result.final_points:.2f}" if result.final_points and result.final_points > 0 else ("0.00" if result.final_time and result.final_time > 0 else "-"),
                     'best_points': f"{result.best_points:.2f}" if result.best_points and result.best_points > 0 else ("0.00" if (result.prelim_time and result.prelim_time > 0) or (result.swim_off_time and result.swim_off_time > 0) or (result.final_time and result.final_time > 0) else "-"),
-                    # Add raw times for sorting
+                    # Add raw times and points for sorting
                     '_final_time': result.final_time if result.final_time and result.final_time > 0 else float('inf'),
                     '_swimoff_time': result.swim_off_time if result.swim_off_time and result.swim_off_time > 0 else float('inf'),
-                    '_prelim_time': result.prelim_time if result.prelim_time and result.prelim_time > 0 else float('inf')
+                    '_prelim_time': result.prelim_time if result.prelim_time and result.prelim_time > 0 else float('inf'),
+                    '_best_points': result.best_points if result.best_points and result.best_points > 0 else 0
                 }
                 results_list.append(result_data)
             
-            # Sort the results by time (fastest first)
-            results_list.sort(key=lambda x: (
-                x['_final_time'],
-                x['_swimoff_time'],
-                x['_prelim_time']
-            ))
+            # Sort the results based on event type
+            if is_dryland:
+                # For dryland events, sort by points (highest first)
+                results_list.sort(key=lambda x: x['_best_points'], reverse=True)
+            else:
+                # For swim events, sort by time (fastest first)
+                results_list.sort(key=lambda x: (
+                    x['_final_time'],
+                    x['_swimoff_time'],
+                    x['_prelim_time']
+                ))
             
             # Remove the sorting fields and add to final results
             for result in results_list:
                 del result['_final_time']
                 del result['_swimoff_time']
                 del result['_prelim_time']
+                del result['_best_points']
                 event_results.append(result)
                 
             # Only include events that have results with points
             if event_results:
-                event_name_with_age = f"{event.name} - {age_group}"
+                # For dryland events, the age group is already in the event name
+                if event.name.startswith('Men\'s') or event.name.startswith('Women\'s'):
+                    event_name_with_age = event.name
+                else:
+                    event_name_with_age = f"{event.name} - {age_group}"
                 results[event_name_with_age] = event_results
         
         return JsonResponse({

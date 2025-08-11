@@ -249,6 +249,45 @@ def parse_gender(gender_str: str) -> str:
     else:
         return Gender.UNKNOWN
 
+def normalize_event_name_for_scoring(event_name: str) -> str:
+    """
+    Normalize event name to match the point system naming convention.
+    
+    Point system has: "Chin-Ups", "Dips", "Vertical Jump"
+    Excel might have: "Chin-ups", "Dips", "Vertical Jump (In)", etc.
+    """
+    event_name = event_name.strip()
+    
+    # Handle common variations
+    if "chin" in event_name.lower() and "up" in event_name.lower():
+        return "Chin-Ups"
+    elif "dip" in event_name.lower():
+        return "Dips"
+    elif "vertical" in event_name.lower() and "jump" in event_name.lower():
+        return "Vertical Jump"
+    
+    # If no match found, return the original name
+    return event_name
+
+def get_age_group(age: int) -> tuple[int, int]:
+    """
+    Get the age group min and max ages for a given age.
+    
+    Age groups: 6, 7, 8, 9, 10, 11, 12, 13, 14, 15+
+    
+    Args:
+        age: The swimmer's age
+        
+    Returns:
+        Tuple of (min_age, max_age) for the age group
+    """
+    if age < 6:
+        return (6, 6)  # Default to 6 if age is too young
+    elif age >= 15:
+        return (15, 99)  # 15+ age group
+    else:
+        return (age, age)  # Individual age groups for 6-14
+
 @transaction.atomic
 def process_dryland_file(file_path: str, meet: Meet = None) -> Dict[str, List[dict]]:
     """
@@ -286,7 +325,7 @@ def process_dryland_file(file_path: str, meet: Meet = None) -> Dict[str, List[di
         # Process data and organize by events
         results = {}
         
-        # Create events for each score column
+        # Create events for each score column and age group
         for event_info in column_mapping['events']:
             # Clean up event name for better display
             clean_event_name = event_info['name'].strip()
@@ -294,12 +333,30 @@ def process_dryland_file(file_path: str, meet: Meet = None) -> Dict[str, List[di
             if '(' in clean_event_name and ')' in clean_event_name:
                 base_name = clean_event_name.split('(')[0].strip()
                 unit = clean_event_name.split('(')[1].split(')')[0].strip()
-                event_name = f"Dryland - {base_name}"
+                base_event_name = f"Dryland - {base_name}"
                 if unit:
-                    event_name += f" ({unit})"
+                    base_event_name += f" ({unit})"
             else:
-                event_name = f"Dryland - {clean_event_name}"
-            results[event_name] = []
+                base_event_name = f"Dryland - {clean_event_name}"
+            
+            # Create events for each age group and gender
+            age_groups = [(6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 99)]
+            genders = [Gender.MALE, Gender.FEMALE]
+            
+            for gender in genders:
+                for min_age, max_age in age_groups:
+                    # Get gender prefix
+                    gender_prefix = "Men's" if gender == Gender.MALE else "Women's"
+                    
+                    # Get age group display name
+                    if max_age == 99:
+                        age_display = "Open"
+                    else:
+                        age_display = str(min_age)
+                    
+                    # Create event name with gender and age group
+                    event_name = f"{gender_prefix} {base_event_name.replace('Dryland - ', '')} - {age_display}"
+                    results[event_name] = []
         
         # Process each athlete row
         for row_idx, row in enumerate(data_rows):
@@ -342,20 +399,50 @@ def process_dryland_file(file_path: str, meet: Meet = None) -> Dict[str, List[di
                     if '(' in clean_event_name and ')' in clean_event_name:
                         base_name = clean_event_name.split('(')[0].strip()
                         unit = clean_event_name.split('(')[1].split(')')[0].strip()
-                        event_name = f"Dryland - {base_name}"
+                        base_event_name = f"Dryland - {base_name}"
                         if unit:
-                            event_name += f" ({unit})"
+                            base_event_name += f" ({unit})"
                     else:
-                        event_name = f"Dryland - {clean_event_name}"
+                        base_event_name = f"Dryland - {clean_event_name}"
                     score_col = event_info['index']
                     
                     if score_col < len(row):
                         score = safe_float(row[score_col])
                         
                         if score is not None and score > 0:
-                            # Calculate points based on score (for dryland, score itself might be the points)
-                            # This is a simplified approach - you may want to implement specific dryland scoring logic
-                            points = score
+                            # Calculate points using the scoring system
+                            scoring_system = ScoringSystem()
+                            
+                            # Normalize event name for scoring system
+                            normalized_event_name = normalize_event_name_for_scoring(clean_event_name)
+                            
+                            # Map gender to point system format
+                            gender_for_scoring = "Men's" if gender == Gender.MALE else "Women's" if gender == Gender.FEMALE else "Men's"  # Default to Men's if unknown
+                            
+                            # Create event key for scoring (e.g., "Men's Chin-Ups" or "Women's Dips")
+                            event_key = f"{gender_for_scoring} {normalized_event_name}"
+                            
+                            # Calculate points based on the scoring system
+                            points = scoring_system.calculate_points(event_key, score, age)
+                            
+                            # If no points found in scoring system, fall back to raw score
+                            if points == 0:
+                                points = score
+                            
+                            # Determine age group for this result
+                            min_age, max_age = get_age_group(age or 12)  # Default to age 12 if no age provided
+                            
+                            # Get gender prefix for event name
+                            gender_prefix = "Men's" if gender == Gender.MALE else "Women's"
+                            
+                            # Get age group display name
+                            if max_age == 99:
+                                age_display = "Open"
+                            else:
+                                age_display = str(min_age)
+                            
+                            # Create the age group event name for database with gender
+                            age_group_event_name = f"{gender_prefix} {base_event_name.replace('Dryland - ', '')} - {age_display}"
                             
                             result_entry = {
                                 "swimmer": full_name,
@@ -365,10 +452,13 @@ def process_dryland_file(file_path: str, meet: Meet = None) -> Dict[str, List[di
                                 "gender": gender,
                                 "team_code": team_name[:10] if team_name else "UNKNOWN",
                                 "team_name": team_name or "Unknown Team",
-                                "event_type": "dryland"
+                                "event_type": "dryland",
+                                "min_age": min_age,
+                                "max_age": max_age
                             }
                             
-                            results[event_name].append(result_entry)
+                            # Add to results using age group event name
+                            results[age_group_event_name].append(result_entry)
                             
                             # Save to database if meet is provided
                             if meet:
@@ -395,18 +485,18 @@ def process_dryland_file(file_path: str, meet: Meet = None) -> Dict[str, List[di
                                     }
                                 )
                                 
-                                # Get or create event
+                                # Get or create event with age group
                                 event_obj, _ = Event.objects.get_or_create(
                                     meet=meet,
-                                    name=event_name,
+                                    name=age_group_event_name,
                                     defaults={
-                                        'event_number': 9000 + event_info['index'],  # High numbers for dryland events
+                                        'event_number': 9000 + event_info['index'] + (min_age * 100),  # High numbers for dryland events with age group offset
                                         'distance': 0,  # No distance for dryland
                                         'stroke': Stroke.OTHER,
                                         'gender': Gender.UNKNOWN,  # Mixed/Unknown
                                         'is_relay': False,
-                                        'min_age': None,
-                                        'max_age': None
+                                        'min_age': min_age,
+                                        'max_age': max_age
                                     }
                                 )
                                 
