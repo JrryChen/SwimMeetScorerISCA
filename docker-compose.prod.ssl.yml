@@ -3,25 +3,24 @@ version: "3.8"
 services:
   redis-app-isca:
     image: redis:latest
+    container_name: isca-redis-prod
     restart: unless-stopped
     volumes:
       - redis_data:/data
 
   django-app-isca:
     image: jrrychen/isca-django
-    container_name: django-app-isca
-    build:
-      context: ./isca_swim_scorer
-    command: python manage.py runserver 0.0.0.0:8000
+    container_name: isca-django-prod
+    command: gunicorn isca_swim_scorer.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120
     volumes:
       - ./isca_swim_scorer:/usr/src/app
       - media_volume:/usr/src/app/media
     environment:
-      - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1,100.27.220.135,4.246.206.246,scorer.swimisca.org,swimisca.org,www.swimisca.org,*
-      - SECRET_KEY=1243546547365
+      - DEBUG=False
+      - ALLOWED_HOSTS=localhost,127.0.0.1,ISCA.red,www.ISCA.red
+      - SECRET_KEY=1231251231421
       - X_FRAME_OPTIONS=SAMEORIGIN
-      - CSRF_TRUSTED_ORIGINS=https://4.246.206.246,https://scorer.swimisca.org,https://swimisca.org,https://www.swimisca.org
+      - CSRF_TRUSTED_ORIGINS=https://ISCA.red,https://www.ISCA.red
     depends_on:
       - redis-app-isca
     restart: unless-stopped
@@ -30,17 +29,15 @@ services:
 
   celery-app-isca:
     image: jrrychen/isca-celery
-    container_name: celery-app-isca
-    build:
-      context: ./isca_swim_scorer
+    container_name: isca-celery-prod
     command: celery --app=isca_swim_scorer worker --loglevel=info
     volumes:
       - ./isca_swim_scorer:/usr/src/app
       - media_volume:/usr/src/app/media
     environment:
-      - DEBUG=1
-      - ALLOWED_HOSTS=localhost,127.0.0.1,100.27.220.135,4.246.206.246,scorer.swimisca.org,swimisca.org,www.swimisca.org,*
-      - SECRET_KEY=1243546547365
+      - DEBUG=False
+      - ALLOWED_HOSTS=localhost,127.0.0.1,ISCA.red,www.ISCA.red
+      - SECRET_KEY=1231251231421
     depends_on:
       - redis-app-isca
       - django-app-isca
@@ -48,7 +45,7 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: nginx-app-isca
+    container_name: isca-nginx-prod
     ports:
       - "80:80"
       - "443:443"
