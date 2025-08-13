@@ -596,6 +596,11 @@ def get_combined_results(request):
         return None
 
     def event_type_key(event):
+        # For dryland events, use the actual event name as the key to separate different events
+        if event.name.startswith('Men\'s') or event.name.startswith('Women\'s') or event.name.startswith('Dryland -') or event.stroke == 'OTH':
+            return event.name
+        
+        # For swim events, use the generic format
         return (
             event.gender,
             event.distance,
@@ -604,6 +609,11 @@ def get_combined_results(request):
         )
 
     def event_type_display(event):
+        # For dryland events, use the actual event name
+        if event.name.startswith('Men\'s') or event.name.startswith('Women\'s') or event.name.startswith('Dryland -') or event.stroke == 'OTH':
+            return event.name
+        
+        # For swim events, use the generic format
         gender_map = {Gender.MALE: "Men", Gender.FEMALE: "Women", Gender.MIXED: "Mixed", Gender.UNKNOWN: "Unknown"}
         gender_text = gender_map.get(event.gender, "Unknown")
         stroke_display = event.get_stroke_display() if hasattr(event, 'get_stroke_display') else event.stroke
@@ -693,7 +703,17 @@ def get_combined_results(request):
                 '_sort_time': best_time if best_time and best_time > 0 else float('inf'),
                 '_duplicate_key': (result.swimmer.full_name, swimmer_age, result.swimmer.team.code if result.swimmer.team else None, best_formatted_time),
             }
-            group_label = f"{event_type_names[type_key]} - {age_group} - Age {age_band}"
+            
+            # Create group label - for dryland events, the age group is already in the event name
+            if is_dryland:
+                group_label = f"{event_type_names[type_key]} - Age {age_band}"
+            else:
+                # Create group label - for dryland events, the age group is already in the event name
+                if is_dryland:
+                    group_label = f"{event_type_names[type_key]} - Age {age_band}"
+                else:
+                    group_label = f"{event_type_names[type_key]} - {age_group} - Age {age_band}"
+            
             grouped_results[group_label].append(result_data)
 
     # Remove duplicates and sort each group by best time

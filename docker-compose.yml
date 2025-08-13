@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
+    networks:
+      - isca-network
 
   django-app-isca:
     image: jrrychen/isca-django
@@ -16,6 +18,8 @@ services:
     volumes:
       - ./isca_swim_scorer:/usr/src/app
       - media_volume:/usr/src/app/media
+    ports:
+      - "80:8000"
     environment:
       - DEBUG=True
       - ALLOWED_HOSTS=localhost,127.0.0.1,100.27.220.135,4.246.206.246,scorer.swimisca.org,swimisca.org,www.swimisca.org,*
@@ -25,8 +29,8 @@ services:
     depends_on:
       - redis-app-isca
     restart: unless-stopped
-    expose:
-      - "8000"
+    networks:
+      - isca-network
 
   celery-app-isca:
     image: jrrychen/isca-celery
@@ -45,20 +49,12 @@ services:
       - redis-app-isca
       - django-app-isca
     restart: unless-stopped
+    networks:
+      - isca-network
 
-  nginx:
-    image: nginx:alpine
-    container_name: nginx-app-isca
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./ssl:/etc/ssl:ro
-      - media_volume:/usr/src/app/media:ro
-    depends_on:
-      - django-app-isca
-    restart: unless-stopped
+networks:
+  isca-network:
+    driver: bridge
 
 volumes:
   redis_data:
