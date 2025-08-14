@@ -1,0 +1,164 @@
+{% extends "base.html" %} {% block content %}
+<div class="container mt-4">
+  <h1>Upload Meet File</h1>
+
+  <div class="alert alert-info mb-4">
+    <h5 class="alert-heading">
+      <i class="bi bi-download"></i> Download Template
+    </h5>
+    <p class="mb-2">
+      Need a dryland event template? Download our standard template file:
+    </p>
+    <a
+      href="{% url 'uploads:download-dryland-template' %}"
+      class="btn btn-outline-primary btn-sm"
+    >
+      <i class="bi bi-file-earmark-excel"></i> Download
+      DrylandEventTemplate.xlsx
+    </a>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" enctype="multipart/form-data" id="uploadForm">
+        {% csrf_token %} {% if form.errors %}
+        <div class="alert alert-danger">Please correct the errors below.</div>
+        {% endif %}
+
+        <div class="mb-3">
+          <label for="{{ form.file.id_for_label }}" class="form-label"
+            >File</label
+          >
+          {{ form.file }}
+          <div class="form-text">
+            <!-- Upload a HY3 file exported from Meet Manager or a ZIP file
+            containing a single HY3 file. -->
+            Upload a HY3 file exported from Meet Manager. You may have to unzip
+            the folder to retrieve it.
+          </div>
+          {% if form.file.errors %}
+          <div class="invalid-feedback d-block">{{ form.file.errors }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <label for="{{ form.file_type.id_for_label }}" class="form-label"
+            >File Type</label
+          >
+          {{ form.file_type }}
+          <div class="form-text">
+            <ul class="mb-0">
+              <li><strong>HY3</strong> - Direct export from Meet Manager</li>
+              <li>
+                <strong>ZIP</strong> - Compressed file containing HY3 file (e.g.
+                from Meet Manager)
+              </li>
+              <li>
+                <strong>XLSX</strong> - Dryland Events Template with athlete
+                scores
+              </li>
+            </ul>
+          </div>
+          {% if form.file_type.errors %}
+          <div class="invalid-feedback d-block">
+            {{ form.file_type.errors }}
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <label for="{{ form.source_type.id_for_label }}" class="form-label"
+            >Source Type</label
+          >
+          {{ form.source_type }} {% if form.source_type.errors %}
+          <div class="invalid-feedback d-block">
+            {{ form.source_type.errors }}
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="alert alert-info">
+          <h5 class="alert-heading">File Requirements:</h5>
+          <ul class="mb-0">
+            <li>HY3 files from Meet Manager are supported for swim events</li>
+            <li>
+              If uploading a ZIP file, it must contain exactly one HY3 file
+            </li>
+            <li>
+              XLSX files are supported for dryland events (must contain athlete
+              names, ages, and event scores)
+            </li>
+            <li>
+              File names usually follow the format: "Meet Name-DDMonYYYY" (e.g.,
+              "Summer Meet-15Jun2024")
+            </li>
+          </ul>
+        </div>
+
+        <div class="d-grid gap-2">
+          <button type="submit" class="btn btn-primary">Upload File</button>
+          <a href="{% url 'uploads:upload-list' %}" class="btn btn-secondary"
+            >Cancel</a
+          >
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const form = document.getElementById("uploadForm");
+    const fileInput = form.querySelector('input[type="file"]');
+    const fileTypeSelect = form.querySelector('select[name="file_type"]');
+
+    form.addEventListener("submit", function (e) {
+      const file = fileInput.files[0];
+      if (!file) {
+        e.preventDefault();
+        alert("Please select a file to upload.");
+        return;
+      }
+
+      const fileExt = file.name.split(".").pop().toLowerCase();
+      const selectedType = fileTypeSelect.value;
+
+      // Check if file extension matches selected type
+      if (selectedType === "HY3" && fileExt !== "hy3") {
+        e.preventDefault();
+        alert("When selecting HY3 file type, you must upload a .hy3 file");
+        return;
+      }
+
+      if (selectedType === "ZIP" && fileExt !== "zip") {
+        e.preventDefault();
+        alert("When selecting ZIP file type, you must upload a .zip file");
+        return;
+      }
+
+      if (selectedType === "XLSX" && !["xlsx", "xls"].includes(fileExt)) {
+        e.preventDefault();
+        alert(
+          "When selecting XLSX file type, you must upload a .xlsx or .xls file"
+        );
+        return;
+      }
+
+      // Check if file type doesn't match selected type
+      if (
+        (fileExt === "zip" && selectedType !== "ZIP") ||
+        (fileExt === "hy3" && selectedType !== "HY3") ||
+        (["xlsx", "xls"].includes(fileExt) && selectedType !== "XLSX")
+      ) {
+        e.preventDefault();
+        alert(
+          "The file type you selected doesn't match the file you uploaded. Please either:\n" +
+            "1. Change the file type to match your file, or\n" +
+            "2. Upload a different file that matches the selected type"
+        );
+        return;
+      }
+    });
+  });
+</script>
+{% endblock %}

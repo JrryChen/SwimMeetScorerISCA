@@ -1,0 +1,27 @@
+{% extends "base.html" %} {% block content %}
+<div class="container mt-4">
+  <h1>Delete File</h1>
+
+  <div class="alert alert-danger">
+    <h4 class="alert-heading">Warning!</h4>
+    <p>
+      Are you sure you want to delete the file "{{ object.original_filename }}"?
+    </p>
+    {% if object.meet %}
+    <p>
+      This will also delete the associated meet "{{ object.meet.name }}" if it's
+      the last file for this meet.
+    </p>
+    {% endif %}
+    <p>This action cannot be undone.</p>
+  </div>
+
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">Delete</button>
+    <a href="{% url 'uploads:upload-list' %}" class="btn btn-secondary"
+      >Cancel</a
+    >
+  </form>
+</div>
+{% endblock %}

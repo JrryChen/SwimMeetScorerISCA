@@ -1,0 +1,790 @@
+{% extends "base.html" %} {% block content %}
+<div class="container mt-4">
+  {% csrf_token %}
+  <h1>Uploaded Files</h1>
+
+  <div class="d-flex gap-2 mb-3">
+    <a href="{% url 'uploads:upload-create' %}" class="btn btn-primary"
+      >Upload New File</a
+    >
+    {% if files %}
+    <button id="deleteAllBtn" class="btn btn-danger">Delete All Files</button>
+    {% endif %}
+    <button id="viewCombinedResultsBtn" class="btn btn-info">
+      View Combined Results
+    </button>
+    <button id="exportCombinedResultsBtn" class="btn btn-success">
+      Export Combined Results
+    </button>
+    <a
+      href="{% url 'uploads:download-dryland-template' %}"
+      class="btn btn-outline-secondary"
+      title="Download DrylandEventTemplate.xlsx"
+    >
+      <i class="bi bi-file-earmark-excel"></i> Download Dryland Events Template
+    </a>
+  </div>
+
+  {% if files %}
+  <div class="table-responsive">
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Filename</th>
+          <th>Type</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Uploaded</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for file in files %}
+        <tr
+          data-file-id="{{ file.id }}"
+          data-celery-task-id="{{ file.celery_task_id }}"
+          data-meet-id="{{ file.meet.id }}"
+        >
+          <td>{{ file.original_filename }}</td>
+          <td>{{ file.get_file_type_display }}</td>
+          <td>{{ file.get_source_type_display }}</td>
+          <td>
+            {% if file.is_processed %}
+            <span class="badge bg-success">Processed</span>
+            {% elif file.celery_task_id %}
+            <span class="badge bg-info">Processing...</span>
+            {% else %}
+            <span class="badge bg-warning">Pending</span>
+            {% endif %}
+          </td>
+          <td>{{ file.created_at|date:"M d, Y H:i" }}</td>
+          <td>
+            <a
+              href="{% url 'uploads:upload-download' file.id %}"
+              class="btn btn-sm btn-success"
+              >Download</a
+            >
+            {% if file.is_processed %}
+            <button
+              class="btn btn-sm btn-info view-results"
+              data-file-id="{{ file.id }}"
+            >
+              View Results
+            </button>
+            <button
+              class="btn btn-sm btn-success export-results"
+              data-file-id="{{ file.id }}"
+            >
+              Export Results
+            </button>
+            {% endif %}
+            <button
+              class="btn btn-sm btn-danger delete-file"
+              data-file-id="{{ file.id }}"
+              data-filename="{{ file.original_filename }}"
+            >
+              Delete
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>No files have been uploaded yet.</p>
+  {% endif %}
+</div>
+
+<!-- View Results Modal -->
+<div class="modal fade" id="viewResultsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Meet Results (Individual Events Only)</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <div id="viewResultsContent" class="mb-2">
+          <div class="text-center">
+            <div class="spinner-border" role="status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Confirm Delete</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <p id="deleteModalText">Are you sure you want to delete this file?</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+          Cancel
+        </button>
+        <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Export Wait Modal -->
+<div class="modal fade" id="exportWaitModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-body text-center">
+        <div class="spinner-border text-primary mb-3" role="status"></div>
+        <p>Exporting results. This may take several minutes. Please wait...</p>
+        <button type="button" class="btn btn-danger mt-3" id="cancelExportBtn">
+          Cancel Export
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Combined Results Modal -->
+<div
+  class="modal fade"
+  id="combinedResultsModal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          Combined Meet Results (All Meets, Individual Events Only)
+        </h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <div id="combinedResultsContent" class="mb-2">
+          <div class="text-center">
+            <div class="spinner-border" role="status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %} {% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const viewResultsModal = new bootstrap.Modal(
+      document.getElementById("viewResultsModal")
+    );
+    const deleteModal = new bootstrap.Modal(
+      document.getElementById("deleteModal")
+    );
+    const combinedResultsModal = new bootstrap.Modal(
+      document.getElementById("combinedResultsModal")
+    );
+    let fileToDelete = null;
+    let isRefreshing = false; // Add flag to track refresh state
+    let currentExportMeetId = null;
+    let exportCancelled = false;
+
+    // Function to get CSRF token
+    function getCSRFToken() {
+      return document.querySelector("[name=csrfmiddlewaretoken]").value;
+    }
+
+    // Function to check processing status
+    async function checkProcessingStatus() {
+      const processingRows = document.querySelectorAll(
+        "tr[data-celery-task-id]"
+      );
+
+      // If no processing rows, don't do anything
+      if (processingRows.length === 0) return;
+
+      for (const row of processingRows) {
+        const fileId = row.dataset.fileId;
+        const taskId = row.dataset.celeryTaskId;
+
+        if (!taskId) continue;
+
+        try {
+          const response = await fetch(`/uploads/${fileId}/status/`);
+          const data = await response.json();
+
+          if (data.status === "success") {
+            // Update the status badge
+            const statusCell = row.querySelector("td:nth-child(4)");
+            statusCell.innerHTML =
+              '<span class="badge bg-success">Processed</span>';
+
+            // Add the view results button if it's a HY3 file
+            const actionsCell = row.querySelector("td:nth-child(6)");
+            const fileType = row
+              .querySelector("td:nth-child(2)")
+              .textContent.trim();
+
+            console.log("File type:", fileType); // Debug log
+
+            if (fileType.includes("HY3")) {
+              // Check if View Results button already exists
+              const existingBtn = actionsCell.querySelector(".view-results");
+              if (!existingBtn) {
+                const viewResultsBtn = document.createElement("button");
+                viewResultsBtn.className = "btn btn-sm btn-info view-results";
+                viewResultsBtn.dataset.fileId = fileId;
+                viewResultsBtn.textContent = "View Results";
+                viewResultsBtn.addEventListener("click", showResults);
+
+                const exportResultsBtn = document.createElement("button");
+                exportResultsBtn.className =
+                  "btn btn-sm btn-success export-results";
+                exportResultsBtn.dataset.fileId = fileId;
+                exportResultsBtn.textContent = "Export Results";
+                exportResultsBtn.addEventListener("click", function () {
+                  exportResults(this.dataset.fileId);
+                });
+
+                // Find the delete button to insert before it
+                const deleteBtn = actionsCell.querySelector(".btn-danger");
+                if (deleteBtn) {
+                  actionsCell.insertBefore(viewResultsBtn, deleteBtn);
+                  actionsCell.insertBefore(exportResultsBtn, deleteBtn);
+                } else {
+                  actionsCell.appendChild(viewResultsBtn);
+                  actionsCell.appendChild(exportResultsBtn);
+                }
+              }
+            }
+
+            // Remove the task ID to stop checking this row
+            row.removeAttribute("data-celery-task-id");
+          }
+        } catch (error) {
+          console.error("Error checking processing status:", error);
+        }
+      }
+
+      // If there are still processing rows, check again in 5 seconds
+      if (document.querySelectorAll("tr[data-celery-task-id]").length > 0) {
+        setTimeout(checkProcessingStatus, 5000);
+      }
+    }
+
+    // Function to show results in the new modal
+    async function showResults(event) {
+      event?.preventDefault?.();
+      const fileId = this.dataset.fileId;
+      const resultsContent = document.getElementById("viewResultsContent");
+      resultsContent.innerHTML =
+        '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+      viewResultsModal.show();
+      try {
+        const response = await fetch(`/uploads/${fileId}/results/`);
+        const data = await response.json();
+        if (response.ok) {
+          let html = "";
+          for (const [eventName, results] of Object.entries(data.results)) {
+            // Only show events with at least one result with points
+            const hasPoints = results.some((result) => {
+              // Consider a point value present if it's not null/undefined/empty/zero
+              return [
+                result.prelim_points,
+                result.swimoff_points,
+                result.final_points,
+                result.best_points,
+              ].some(
+                (p) =>
+                  p !== null &&
+                  p !== undefined &&
+                  p !== "-" &&
+                  p !== 0 &&
+                  p !== "0.00"
+              );
+            });
+            if (!hasPoints) continue;
+            
+            // Sort results by final time/score (for swim events) or by points (for dryland events)
+            const sortedResults = [...results].sort((a, b) => {
+              // Check if this is a dryland event (has points in final_time field)
+              const isDryland = eventName.includes("Men's") || eventName.includes("Women's") || eventName.includes("Dryland");
+              
+              if (isDryland) {
+                // For dryland events, sort by best_points (highest first)
+                const aPoints = parseFloat(a.best_points) || 0;
+                const bPoints = parseFloat(b.best_points) || 0;
+                return bPoints - aPoints; // Descending order
+              } else {
+                // For swim events, sort by final_time (fastest first)
+                const aTime = parseFloat(a.final_time) || Infinity;
+                const bTime = parseFloat(b.final_time) || Infinity;
+                return aTime - bTime; // Ascending order
+              }
+            });
+            
+            html += `<h4>${eventName}</h4>`;
+            html += '<table class="table table-sm">';
+            html +=
+              "<thead><tr><th>Swimmer</th><th>Age</th><th>Team</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
+            html += "<tbody>";
+            for (const result of sortedResults) {
+              html += `<tr>
+                  <td>${result.swimmer}</td>
+                  <td>${result.age}</td>
+                  <td>${result.team_code || "-"}</td>
+                  <td>${result.prelim_time || "-"}</td>
+                  <td>${result.prelim_points || "-"}</td>
+                  <td>${result.swimoff_time || "-"}</td>
+                  <td>${result.swimoff_points || "-"}</td>
+                  <td>${result.final_time || "-"}</td>
+                  <td>${result.final_points || "-"}</td>
+                  <td>${result.best_points || "-"}</td>
+              </tr>`;
+            }
+            html += "</tbody></table>";
+          }
+          if (!html) {
+            html =
+              '<div class="alert alert-info">No events with points to display.</div>';
+          }
+          resultsContent.innerHTML = html;
+        } else {
+          resultsContent.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+        }
+      } catch (error) {
+        console.error("Error loading results:", error);
+        resultsContent.innerHTML =
+          '<div class="alert alert-danger">Error loading results</div>';
+      }
+    }
+
+    // Function to delete a file
+    async function deleteFile(fileId) {
+      try {
+        const response = await fetch(`/uploads/${fileId}/delete/`, {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": getCSRFToken(),
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.ok) {
+          // Remove the row from the table
+          const row = document.querySelector(`tr[data-file-id="${fileId}"]`);
+          if (row) {
+            row.remove();
+          }
+
+          // If no files left, reload the page to show the "No files" message
+          if (document.querySelectorAll("tbody tr").length === 0) {
+            window.location.reload();
+          }
+        } else {
+          const data = await response.json();
+          alert(data.error || "Error deleting file");
+        }
+      } catch (error) {
+        console.error("Error deleting file:", error);
+        alert("Error deleting file");
+      }
+    }
+
+    // Function to delete all files
+    async function deleteAllFiles() {
+      try {
+        const response = await fetch("/uploads/delete-all/", {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": getCSRFToken(),
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          const data = await response.json();
+          alert(data.error || "Error deleting files");
+        }
+      } catch (error) {
+        console.error("Error deleting files:", error);
+        alert("Error deleting files");
+      }
+    }
+
+    // Helper to show/hide export wait modal
+    function showExportWaitModal() {
+      const modal = new bootstrap.Modal(
+        document.getElementById("exportWaitModal")
+      );
+      modal.show();
+      return modal;
+    }
+
+    // Helper to trigger download after modal is hidden
+    function triggerDownloadAfterModal(url) {
+      const modalEl = document.getElementById("exportWaitModal");
+      // If modal is visible, wait for it to hide before downloading
+      if (modalEl.classList.contains("show")) {
+        modalEl.addEventListener("hidden.bs.modal", function handler() {
+          modalEl.removeEventListener("hidden.bs.modal", handler);
+          triggerDownload(url);
+        });
+        const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+        if (exportWaitModal) exportWaitModal.hide();
+      } else {
+        triggerDownload(url);
+      }
+    }
+
+    async function exportResults(fileId) {
+      const button = document.querySelector(
+        `.export-results[data-file-id="${fileId}"]`
+      );
+      const originalText = button.textContent;
+      let exportWaitModal = null;
+      try {
+        button.disabled = true;
+        button.innerHTML =
+          '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Exporting...';
+        // Show the waiting modal
+        exportWaitModal = showExportWaitModal();
+
+        // Get the meet ID from the row
+        const row = button.closest("tr");
+        const meetId = row ? row.getAttribute("data-meet-id") : null;
+        if (!meetId) {
+          alert("Meet ID not found.");
+          return;
+        }
+        currentExportMeetId = meetId; // Track the current export
+        // 1. Check if export zip exists
+        let statusResp = await fetch(`/uploads/exports-status/${meetId}/`);
+        let statusData = await statusResp.json();
+        if (statusData.status === "ready") {
+          triggerDownloadAfterModal(statusData.download_url);
+          return;
+        }
+        // 2. If not, trigger export
+        const response = await fetch(`/uploads/${fileId}/export-results/`, {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": getCSRFToken(),
+            "Content-Type": "application/json",
+          },
+        });
+        const data = await response.json();
+        if (data.status === "ready") {
+          triggerDownloadAfterModal(data.download_url);
+        } else if (data.status === "processing" && meetId) {
+          await pollExportReady(meetId);
+        } else {
+          throw new Error(data.error || "Export failed");
+        }
+      } catch (error) {
+        console.error("Error exporting results:", error);
+        alert("Error exporting results: " + error.message);
+        const modalEl = document.getElementById("exportWaitModal");
+        const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+        if (exportWaitModal) exportWaitModal.hide();
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+
+    // Poll until export is ready, with a longer timeout (e.g., 10 minutes)
+    async function pollExportReady(meetId) {
+      let tries = 0;
+      const maxTries = 300; // 300 * 2s = 600s = 10 minutes
+      while (tries < maxTries) {
+        if (exportCancelled) {
+          const modalEl = document.getElementById("exportWaitModal");
+          const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+          if (exportWaitModal) exportWaitModal.hide();
+          alert("Export cancelled.");
+          return;
+        }
+        let resp = await fetch(`/uploads/exports-status/${meetId}/`);
+        let data = await resp.json();
+        if (data.status === "ready") {
+          triggerDownloadAfterModal(data.download_url);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        tries++;
+      }
+      const modalEl = document.getElementById("exportWaitModal");
+      const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+      if (exportWaitModal) exportWaitModal.hide();
+      alert("Export is taking too long. Please try again later.");
+    }
+
+    // Helper to trigger download
+    function triggerDownload(url) {
+      const link = document.createElement("a");
+      link.href = url;
+      // The filename will be set by the server's Content-Disposition header
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    // Add click handlers for view results buttons
+    document.querySelectorAll(".view-results").forEach((button) => {
+      button.addEventListener("click", showResults);
+    });
+
+    // Add click handlers for delete buttons
+    document.querySelectorAll(".delete-file").forEach((button) => {
+      button.addEventListener("click", function () {
+        fileToDelete = this.dataset.fileId;
+        const filename = this.dataset.filename;
+        document.getElementById(
+          "deleteModalText"
+        ).textContent = `Are you sure you want to delete "${filename}"?`;
+        deleteModal.show();
+      });
+    });
+
+    // Add click handler for delete all button
+    document
+      .getElementById("deleteAllBtn")
+      ?.addEventListener("click", function () {
+        fileToDelete = null;
+        document.getElementById("deleteModalText").textContent =
+          "Are you sure you want to delete all files?";
+        deleteModal.show();
+      });
+
+    // Add click handler for confirm delete button
+    document
+      .getElementById("confirmDeleteBtn")
+      .addEventListener("click", function () {
+        if (fileToDelete) {
+          deleteFile(fileToDelete);
+        } else {
+          deleteAllFiles();
+        }
+        deleteModal.hide();
+      });
+
+    // Add click handlers for export buttons
+    document.querySelectorAll(".export-results").forEach((button) => {
+      button.addEventListener("click", function () {
+        exportResults(this.dataset.fileId);
+      });
+    });
+
+    // Add click handler for cancel export button
+    document
+      .getElementById("cancelExportBtn")
+      .addEventListener("click", async function () {
+        exportCancelled = true;
+        if (currentExportMeetId) {
+          try {
+            await fetch(`/uploads/exports-cancel/${currentExportMeetId}/`, {
+              method: "POST",
+              headers: {
+                "X-CSRFToken": getCSRFToken(),
+                "Content-Type": "application/json",
+              },
+            });
+          } catch (e) {
+            // Optionally log error
+          }
+        }
+        const exportWaitModalEl = document.getElementById("exportWaitModal");
+        const exportWaitModal = bootstrap.Modal.getInstance(exportWaitModalEl);
+        if (exportWaitModal) exportWaitModal.hide();
+      });
+
+    // Combined Results Handlers
+    document
+      .getElementById("viewCombinedResultsBtn")
+      .addEventListener("click", async function () {
+        const resultsContent = document.getElementById(
+          "combinedResultsContent"
+        );
+        resultsContent.innerHTML =
+          '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+        combinedResultsModal.show();
+        try {
+          const response = await fetch("/uploads/combined-results/");
+          const data = await response.json();
+          if (response.ok) {
+            let html = "";
+            for (const [eventName, results] of Object.entries(data.results)) {
+              // Only show events with at least one result with points
+              const hasPoints = results.some((result) => {
+                return [
+                  result.prelim_points,
+                  result.swimoff_points,
+                  result.final_points,
+                  result.best_points,
+                ].some(
+                  (p) =>
+                    p !== null &&
+                    p !== undefined &&
+                    p !== "-" &&
+                    p !== 0 &&
+                    p !== "0.00"
+                );
+              });
+              if (!hasPoints) continue;
+              
+              // Sort results by final time/score (for swim events) or by points (for dryland events)
+              const sortedResults = [...results].sort((a, b) => {
+                // Check if this is a dryland event (has points in final_time field)
+                const isDryland = eventName.includes("Men's") || eventName.includes("Women's") || eventName.includes("Dryland");
+                
+                if (isDryland) {
+                  // For dryland events, sort by best_points (highest first)
+                  const aPoints = parseFloat(a.best_points) || 0;
+                  const bPoints = parseFloat(b.best_points) || 0;
+                  return bPoints - aPoints; // Descending order
+                } else {
+                  // For swim events, sort by final_time (fastest first)
+                  const aTime = parseFloat(a.final_time) || Infinity;
+                  const bTime = parseFloat(b.final_time) || Infinity;
+                  return aTime - bTime; // Ascending order
+                }
+              });
+              
+              html += `<h4>${eventName}</h4>`;
+              html += '<table class="table table-sm">';
+              html +=
+                "<thead><tr><th>Meet</th><th>Swimmer</th><th>Age</th><th>Team</th><th>Prelim</th><th>Prelim Pts</th><th>Swimoff</th><th>Swimoff Pts</th><th>Final</th><th>Final Pts</th><th>Best Pts</th></tr></thead>";
+              html += "<tbody>";
+              for (const result of sortedResults) {
+                html += `<tr>
+                  <td>${result.meet}</td>
+                  <td>${result.swimmer}</td>
+                  <td>${result.age}</td>
+                  <td>${result.team_code || "-"}</td>
+                  <td>${result.prelim_time || "-"}</td>
+                  <td>${result.prelim_points || "-"}</td>
+                  <td>${result.swimoff_time || "-"}</td>
+                  <td>${result.swimoff_points || "-"}</td>
+                  <td>${result.final_time || "-"}</td>
+                  <td>${result.final_points || "-"}</td>
+                  <td>${result.best_points || "-"}</td>
+              </tr>`;
+              }
+              html += "</tbody></table>";
+            }
+            if (!html) {
+              html =
+                '<div class="alert alert-info">No events with points to display.</div>';
+            }
+            resultsContent.innerHTML = html;
+          } else {
+            resultsContent.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+          }
+        } catch (error) {
+          console.error("Error loading combined results:", error);
+          resultsContent.innerHTML =
+            '<div class="alert alert-danger">Error loading combined results</div>';
+        }
+      });
+
+    document
+      .getElementById("exportCombinedResultsBtn")
+      .addEventListener("click", async function () {
+        const button = this;
+        const originalText = button.textContent;
+        let exportWaitModal = null;
+        try {
+          button.disabled = true;
+          button.innerHTML =
+            '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Exporting...';
+          exportWaitModal = showExportWaitModal();
+          // 1. Check if export zip exists
+          let statusResp = await fetch(`/uploads/exports-status/combined/`);
+          let statusData = await statusResp.json();
+          if (statusData.status === "ready") {
+            triggerDownloadAfterModal(statusData.download_url);
+            return;
+          }
+          // 2. If not, trigger export
+          const response = await fetch(`/uploads/export-combined-results/`, {
+            method: "POST",
+            headers: {
+              "X-CSRFToken": getCSRFToken(),
+              "Content-Type": "application/json",
+            },
+          });
+          const data = await response.json();
+          if (data.status === "ready") {
+            triggerDownloadAfterModal(data.download_url);
+          } else if (data.status === "processing") {
+            await pollExportReadyCombined();
+          } else {
+            throw new Error(data.error || "Export failed");
+          }
+        } catch (error) {
+          console.error("Error exporting combined results:", error);
+          alert("Error exporting combined results: " + error.message);
+          const modalEl = document.getElementById("exportWaitModal");
+          const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+          if (exportWaitModal) exportWaitModal.hide();
+        } finally {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      });
+
+    async function pollExportReadyCombined() {
+      let tries = 0;
+      const maxTries = 300; // 10 minutes
+      while (tries < maxTries) {
+        if (exportCancelled) {
+          const modalEl = document.getElementById("exportWaitModal");
+          const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+          if (exportWaitModal) exportWaitModal.hide();
+          alert("Export cancelled.");
+          return;
+        }
+        let resp = await fetch(`/uploads/exports-status/combined/`);
+        let data = await resp.json();
+        if (data.status === "ready") {
+          triggerDownloadAfterModal(data.download_url);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        tries++;
+      }
+      const modalEl = document.getElementById("exportWaitModal");
+      const exportWaitModal = bootstrap.Modal.getInstance(modalEl);
+      if (exportWaitModal) exportWaitModal.hide();
+      alert("Export is taking too long. Please try again later.");
+    }
+
+    // Start checking processing status
+    checkProcessingStatus();
+  });
+</script>
+{% endblock %}
