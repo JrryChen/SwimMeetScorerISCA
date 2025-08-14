@@ -22,10 +22,10 @@ services:
       - "80:8000"
     environment:
       - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1,100.27.220.135,4.246.206.246,scorer.swimisca.org,swimisca.org,www.swimisca.org,*
+      - ALLOWED_HOSTS=localhost,127.0.0.1,*
       - SECRET_KEY=1243546547365
       - X_FRAME_OPTIONS=SAMEORIGIN
-      - CSRF_TRUSTED_ORIGINS=https://4.246.206.246,https://scorer.swimisca.org,https://swimisca.org,https://www.swimisca.org
+      - CSRF_TRUSTED_ORIGINS=https://localhost,https://127.0.0.1
     depends_on:
       - redis-app-isca
     restart: unless-stopped
